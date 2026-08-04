@@ -75,8 +75,9 @@ function databaseUrlFromConfig(config) {
     const database = config.database || '';
     if (!database) return '';
     if (database.includes('://')) return `${database}${params}`;
-    const pathPrefix = database.startsWith('/') ? '///' : '';
-    return `${engine}:${pathPrefix}${database}${params}`;
+    const normalizedPath = database.replaceAll('\\', '/');
+    const pathPrefix = /^[A-Za-z]:\//.test(normalizedPath) || normalizedPath.startsWith('/') ? '///' : '';
+    return `file:${pathPrefix}${encodeURI(normalizedPath)}${params}`;
   }
   const auth = config.username
     ? `${encodeCredential(config.username)}${config.password ? `:${encodeURIComponent(config.password)}` : ''}@`
@@ -98,7 +99,9 @@ function parseDatabaseUrl(databaseUrl) {
       engine,
       host: isFileLike ? '' : url.hostname,
       port: isFileLike ? '' : url.port,
-      database: isFileLike ? decodeURIComponent(url.pathname || '') : decodeURIComponent(url.pathname.replace(/^\//, '')),
+      database: isFileLike
+        ? decodeURIComponent((url.pathname || '').replace(/^\/([A-Za-z]:\/)/, '$1'))
+        : decodeURIComponent(url.pathname.replace(/^\//, '')),
       username: decodeURIComponent(url.username || ''),
       password: decodeURIComponent(url.password || ''),
       params: url.search.replace(/^\?/, '')

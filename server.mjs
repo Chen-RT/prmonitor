@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, access, unlink } from 'node:fs/promises';
 import { constants, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { gzip, gunzip } from 'node:zlib';
@@ -91,7 +91,7 @@ const defaultStorageConfig = () => ({
   driver: 'local-file',
   filePath: path.join(DATA_DIR, 'store.json'),
   compressed: false,
-  databaseUrl: `sqlite://${path.join(DATA_DIR, 'pr-monitor.sqlite')}`,
+  databaseUrl: pathToFileURL(path.join(DATA_DIR, 'pr-monitor.sqlite')).href,
   databaseConfig: {
     mode: 'full',
     engine: 'sqlite',
@@ -109,13 +109,24 @@ function resolveLocalPath(candidate) {
   return path.isAbsolute(candidate) ? candidate : path.join(__dirname, candidate);
 }
 
+function normalizeFileLikeDatabaseUrl(databaseUrl) {
+  const value = String(databaseUrl || '').trim();
+  if (!value) return '';
+  if (!value.includes('://')) return value;
+  const windowsDriveUrl = value.match(/^(sqlite|file):\/\/\/?([A-Za-z]:[\\/].*)$/i);
+  if (windowsDriveUrl) {
+    return `${windowsDriveUrl[1]}:///${windowsDriveUrl[2].replaceAll('\\', '/')}`;
+  }
+  return value.replaceAll('\\', '/');
+}
+
 function normalizeStorageConfig(raw = {}) {
   const defaults = defaultStorageConfig();
   const config = {
     driver: raw.driver || defaults.driver,
     filePath: raw.filePath || defaults.filePath,
     compressed: Boolean(raw.compressed),
-    databaseUrl: raw.databaseUrl || defaults.databaseUrl,
+    databaseUrl: normalizeFileLikeDatabaseUrl(raw.databaseUrl || defaults.databaseUrl),
     databaseConfig: {
       ...defaults.databaseConfig,
       ...(raw.databaseConfig || {})
@@ -274,16 +285,20 @@ async function writeLocalFileStore(store, config) {
 function sqlitePathFromUrl(databaseUrl) {
   if (!databaseUrl) return path.join(DATA_DIR, 'pr-monitor.sqlite');
   if (!databaseUrl.includes('://')) return resolveLocalPath(databaseUrl);
-  const url = new URL(databaseUrl);
+  const normalizedUrl = normalizeFileLikeDatabaseUrl(databaseUrl);
+  const url = new URL(normalizedUrl);
   if (!['sqlite:', 'file:'].includes(url.protocol)) {
     throw new Error('当前内置数据库后端仅支持 sqlite:// 或 file:// 地址。');
   }
-  return decodeURIComponent(url.pathname);
+  if (url.protocol === 'file:') return fileURLToPath(url);
+  const pathname = decodeURIComponent(url.pathname);
+  const windowsPath = pathname.match(/^\/([A-Za-z]:\/.*)$/);
+  return path.normalize(windowsPath ? windowsPath[1] : pathname);
 }
 
 function assertSupportedSqliteStorage(databaseUrl) {
   if (!databaseUrl || !databaseUrl.includes('://')) return;
-  const protocol = new URL(databaseUrl).protocol;
+  const protocol = new URL(normalizeFileLikeDatabaseUrl(databaseUrl)).protocol;
   if (!['sqlite:', 'file:'].includes(protocol)) {
     throw new Error('当前内置数据库存储仅支持 sqlite:// 或 file://。MySQL/PostgreSQL 地址可以用字段生成后复制，后续接入对应驱动后才能作为运行存储。');
   }
