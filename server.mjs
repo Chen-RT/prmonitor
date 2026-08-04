@@ -1067,6 +1067,9 @@ function maskDatabaseUrl(databaseUrl) {
 }
 
 async function clientState(store) {
+  if (refreshStoredPrUrls(store)) {
+    await saveStore(store);
+  }
   const { meta } = await readTokenInfo(store);
   return stateForClient(store, meta, storageForClient(await loadStorageConfig()));
 }
@@ -1245,6 +1248,42 @@ function recordKey(userId, displayKey) {
   return `${userId}:${displayKey}`;
 }
 
+function bitbucketBaseUrl(storeOrSettings = {}) {
+  const settings = storeOrSettings.settings || storeOrSettings;
+  return String(settings.baseUrl || DEFAULT_BITBUCKET_BASE_URL).trim().replace(/\/+$/, '') || DEFAULT_BITBUCKET_BASE_URL;
+}
+
+function prWebUrl(storeOrSettings, pr) {
+  const project = pr.project || pr.toRef?.repository?.project?.key || 'UNKNOWN';
+  const repo = pr.repo || pr.toRef?.repository?.slug || 'unknown';
+  const id = pr.id;
+  return `${bitbucketBaseUrl(storeOrSettings)}/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(repo)}/pull-requests/${encodeURIComponent(id)}`;
+}
+
+function refreshStoredPrUrls(store) {
+  let changed = false;
+  for (const pr of Object.values(store.prs || {})) {
+    if (!pr.project || !pr.repo || !pr.id) continue;
+    const nextUrl = prWebUrl(store, pr);
+    if (pr.url !== nextUrl) {
+      pr.url = nextUrl;
+      changed = true;
+    }
+  }
+  for (const job of store.jobs || []) {
+    const pr = store.prs?.[job.prKey];
+    const id = pr?.id || String(job.prDisplayKey || '').split('#').pop();
+    const nextUrl = pr
+      ? prWebUrl(store, pr)
+      : (job.project && job.repo && id ? prWebUrl(store, { project: job.project, repo: job.repo, id }) : '');
+    if (nextUrl && job.prUrl !== nextUrl) {
+      job.prUrl = nextUrl;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function normalizeUserInput(body, existing = {}) {
   const username = String(body.username ?? existing.username ?? '').trim();
   const displayName = String(body.displayName ?? existing.displayName ?? username).trim();
@@ -1397,7 +1436,7 @@ async function reviewSignalForPr(store, pr, user = currentUser(store)) {
   }
 }
 
-function normalizePr(pr, source, forcedStatus, localRepoPath = '', reviewSignal = {}, user = null) {
+function normalizePr(pr, source, forcedStatus, localRepoPath = '', reviewSignal = {}, user = null, storeOrSettings = {}) {
   const project = pr.toRef?.repository?.project?.key || pr.project || 'UNKNOWN';
   const repo = pr.toRef?.repository?.slug || pr.repo || 'unknown';
   const id = pr.id;
@@ -1424,7 +1463,7 @@ function normalizePr(pr, source, forcedStatus, localRepoPath = '', reviewSignal 
     state: pr.state || 'OPEN',
     reviewerStatus: reviewerStatus(pr, forcedStatus, user),
     source,
-    url: `${DEFAULT_BITBUCKET_BASE_URL}/projects/${project}/repos/${repo}/pull-requests/${id}`,
+    url: prWebUrl(storeOrSettings, { project, repo, id }),
     fromBranch,
     toBranch,
     fromCommit: pr.fromRef?.latestCommit || '',
@@ -1607,9 +1646,9 @@ async function syncPrs({ triggerReview = false, reason = 'manual' } = {}) {
     const baseProject = raw.toRef?.repository?.project?.key || raw.project || 'UNKNOWN';
     const baseRepo = raw.toRef?.repository?.slug || raw.repo || 'unknown';
     const mappedRepoPath = await resolveRepoPathForPr(user, baseProject, baseRepo);
-    const basic = normalizePr(raw, 'dashboard', 'UNAPPROVED', mappedRepoPath, {}, user);
+    const basic = normalizePr(raw, 'dashboard', 'UNAPPROVED', mappedRepoPath, {}, user, store);
     const signal = await reviewSignalForPr(store, basic, user);
-    const normalized = normalizePr(raw, 'dashboard', 'UNAPPROVED', mappedRepoPath, signal, user);
+    const normalized = normalizePr(raw, 'dashboard', 'UNAPPROVED', mappedRepoPath, signal, user, store);
     const previous = store.prs[normalized.key];
     const platformReviewValid = Boolean(
       (previous?.platformReviewedCommit && previous.platformReviewedCommit === normalized.fromCommit) ||
@@ -1640,9 +1679,9 @@ async function syncPrs({ triggerReview = false, reason = 'manual' } = {}) {
     const baseProject = raw.toRef?.repository?.project?.key || raw.project || 'UNKNOWN';
     const baseRepo = raw.toRef?.repository?.slug || raw.repo || 'unknown';
     const mappedRepoPath = await resolveRepoPathForPr(user, baseProject, baseRepo);
-    const basic = normalizePr(raw, 'dashboard', 'APPROVED', mappedRepoPath, {}, user);
+    const basic = normalizePr(raw, 'dashboard', 'APPROVED', mappedRepoPath, {}, user, store);
     const signal = await reviewSignalForPr(store, basic, user);
-    const normalized = normalizePr(raw, 'dashboard', 'APPROVED', mappedRepoPath, signal, user);
+    const normalized = normalizePr(raw, 'dashboard', 'APPROVED', mappedRepoPath, signal, user, store);
     seenReviewed.add(normalized.key);
     const previous = store.prs[normalized.key];
     store.prs[normalized.key] = {
@@ -1897,6 +1936,8 @@ async function runReviewJob(jobId) {
   }
   const pr = store.prs[job.prKey];
   if (!pr) throw new Error('PR not found for review job.');
+  pr.url = prWebUrl(store, pr);
+  job.prUrl = pr.url;
   if (job.status === 'done' && job.reviewedCommit === pr.fromCommit) {
     return job;
   }
@@ -2290,7 +2331,8 @@ async function importPr(input, localRepoPath) {
     undefined,
     await resolveRepoPathForPr(user, raw.toRef?.repository?.project?.key || parsed.project, raw.toRef?.repository?.slug || parsed.repo, localRepoPath),
     {},
-    user
+    user,
+    store
   );
   const previous = store.prs[normalized.key];
   store.prs[normalized.key] = {
@@ -2689,6 +2731,7 @@ const server = createServer(async (request, response) => {
           : (store.settings.codexExecutablePath || ''),
         intervalMinutes: Math.max(1, Number(body.intervalMinutes ?? store.settings.intervalMinutes))
       };
+      refreshStoredPrUrls(store);
       addEvent(store, 'settings', '设置已更新');
       await saveStore(store);
       await refreshScheduler();
