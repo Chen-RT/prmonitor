@@ -128,9 +128,10 @@ Suggested local file shape:
 
 ```json
 {
+  "accessToken": "<access-token>",
   "token": "<access-token>",
-  "username": "oliver.chen",
-  "displayName": "Oliver.Chen-陈润桐",
+  "username": "reviewer.name",
+  "displayName": "Reviewer Name",
   "updatedAt": "2026-07-30T10:13:04+08:00"
 }
 ```

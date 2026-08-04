@@ -1091,7 +1091,7 @@ function tokenMetaFromUser(user) {
 async function readLegacyTokenInfo() {
   try {
     const auth = JSON.parse(await readFile(TOKEN_FILE, 'utf8'));
-    const token = String(auth.token || auth.accessToken || '').trim();
+    const token = String(auth.accessToken || auth.token || '').trim();
     if (!token) return { token: null, meta: null };
     return {
       token,
@@ -1124,6 +1124,7 @@ async function syncLegacyTokenFile(user) {
   if (!token) return;
   await mkdir(path.dirname(TOKEN_FILE), { recursive: true });
   await writeFile(TOKEN_FILE, `${JSON.stringify({
+    accessToken: token,
     token,
     username: user.bitbucketTokenUsername || user.username || 'unknown',
     displayName: user.bitbucketTokenDisplayName || user.displayName || user.username || 'unknown',
@@ -1788,7 +1789,9 @@ function buildReviewPrompt(pr, settings) {
   return [
     `[$bitbucket-pr-review](${path.join(SKILL_DIR, 'SKILL.md')})`,
     '请评审这个 Bitbucket PR，并把确认的问题以中文 Bitbucket inline comment 发布到 PR 上。',
-    '用户已经在 PR 监控平台中启用自动评审，确认允许复用本地已保存的 Bitbucket token。',
+    '用户已经在 PR 监控平台中启用自动评审，确认允许复用本地已保存的 Bitbucket token；不要再向用户索要 token。',
+    `认证文件: ${TOKEN_FILE}`,
+    '认证文件由平台维护，包含 accessToken/token 字段；请优先读取并使用 accessToken。',
     `PR: ${pr.url}`,
     `本地仓库目录: ${pr.localRepoPath || '未配置'}`,
     '要求：只评论确认的问题；评论带 [P0]/[P1]/[P2]；不要发布猜测性或纯风格评论；最终输出评审摘要。',
