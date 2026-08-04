@@ -1,0 +1,37 @@
+name: Build Desktop Installers
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    name: macOS DMG
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:pack:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-monitor-macos-dmg
+          path: dist/*.dmg
+
+  windows:
+    name: Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:pack:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-monitor-windows-exe
+          path: dist/*.exe

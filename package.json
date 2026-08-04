@@ -1,0 +1,79 @@
+{
+  "name": "pr-monitor-platform",
+  "version": "0.1.0",
+  "description": "Desktop PR monitor and Bitbucket review assistant.",
+  "author": "PR Monitor",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "desktop": "electron .",
+    "desktop:dir": "electron-builder --dir",
+    "desktop:dir:win": "electron-builder --win --x64 --dir",
+    "desktop:pack": "npm run desktop:pack:mac",
+    "desktop:pack:mac": "npm run desktop:dir && node scripts/create-dmg.mjs",
+    "desktop:pack:mac:builder": "electron-builder --mac",
+    "desktop:pack:win:zip": "npm run desktop:dir:win && node scripts/create-win-zip.mjs",
+    "desktop:pack:win": "electron-builder --win nsis --x64"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "build": {
+    "appId": "com.local.pr-monitor",
+    "productName": "PR Monitor",
+    "icon": "assets/app-icon",
+    "files": [
+      "electron/**/*",
+      "public/**/*",
+      "assets/**/*",
+      "server.mjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "app-resources/skills",
+        "to": "skills",
+        "filter": [
+          "**/*",
+          "!**/.local/**",
+          "!**/bitbucket-auth.json",
+          "!**/.DS_Store"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dir",
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/app-icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PR Monitor"
+    }
+  },
+  "dependencies": {
+    "mysql2": "^3.23.2"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  }
+}

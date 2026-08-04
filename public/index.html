@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>PR 监控平台</h1>
+            <p id="tokenLine">正在读取认证状态</p>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="syncBtn" class="primary">立即同步</button>
+          <button id="runNowBtn">执行定时任务</button>
+          <a id="logsNavLink" class="button-link" href="/logs.html">日志</a>
+          <a id="settingsNavLink" class="button-link" href="/settings.html">平台设置</a>
+          <a id="usersNavLink" class="button-link" href="/users.html" hidden>用户管理</a>
+          <div class="user-menu">
+            <button id="userMenuBtn" class="user-button" aria-expanded="false" aria-haspopup="menu">
+              <span id="userAvatar">U</span>
+              <span id="userButtonText">用户</span>
+            </button>
+            <div id="userDropdown" class="user-dropdown" hidden>
+              <div class="user-card">
+                <strong id="currentUserName">用户</strong>
+                <span id="currentUserMeta">角色</span>
+              </div>
+              <label>
+                <span>切换用户</span>
+                <select id="switchUserSelect"></select>
+              </label>
+              <button id="switchUserBtn" class="wide">切换用户</button>
+              <div class="divider"></div>
+              <a class="menu-link" href="/user-settings.html">个人设置</a>
+              <a id="userManageMenuLink" class="menu-link" href="/users.html" hidden>用户管理</a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="stats" id="stats"></section>
+
+      <section class="layout">
+        <aside class="panel controls">
+          <h2>工作台</h2>
+          <div class="hint" id="userScopedHint"></div>
+          <div class="scheduler" id="schedulerBox"></div>
+          <a id="settingsWideLink" class="button-link wide-link" href="/settings.html">打开平台设置</a>
+          <a class="button-link wide-link" href="/logs.html">打开日志表</a>
+
+          <h2>导入 PR</h2>
+          <label>
+            <span>PR URL 列表</span>
+            <textarea id="importInput" rows="5" placeholder="每行一个 Bitbucket PR URL"></textarea>
+          </label>
+          <label>
+            <span>本地仓库路径覆盖</span>
+            <input id="importRepoPath" placeholder="覆盖该 PR 的本地仓库路径，可留空" />
+          </label>
+          <button id="importBtn" class="wide">导入</button>
+        </aside>
+
+        <section class="maincol">
+          <div class="tabs">
+            <button class="tab active" data-tab="awaiting">待处理</button>
+            <button class="tab" data-tab="reviewed-unapproved">已评未 Approve</button>
+            <button class="tab" data-tab="approved">已 Approve</button>
+            <button class="tab" data-tab="imported">已导入</button>
+            <button class="tab" data-tab="jobs">Review 任务</button>
+          </div>
+          <div id="content" class="content"></div>
+        </section>
+      </section>
+    </main>
+
+    <div id="repoPathModal" class="modal-backdrop" hidden>
+      <section class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="repoPathTitle">
+        <div class="section-title">
+          <h2 id="repoPathTitle">配置本地仓库路径</h2>
+          <p id="repoPathPrMeta">为当前 PR 选择可读取的本地仓库目录。</p>
+        </div>
+        <form id="repoPathForm">
+          <label>
+            <span>本地仓库路径</span>
+            <input id="repoPathInput" autocomplete="off" placeholder="/path/to/local/repo-name" />
+          </label>
+          <label class="check">
+            <input id="repoPathSaveMapping" type="checkbox" checked />
+            <span>保存为该仓库的用户映射，同仓库后续 PR 自动使用这个路径</span>
+          </label>
+          <div class="modal-actions">
+            <button id="repoPathCancelBtn" type="button">取消</button>
+            <button class="primary" type="submit">保存路径</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

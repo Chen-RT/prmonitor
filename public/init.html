@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>初始化 · PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell settings-shell init-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>初始化平台</h1>
+            <p>按步骤完成用户、认证、存储和自动评审环境配置</p>
+          </div>
+        </div>
+      </header>
+
+      <section class="settings-grid single init-wizard-grid">
+        <form id="initForm" class="panel settings-card wizard-card">
+          <nav class="wizard-steps" aria-label="初始化步骤">
+            <button class="wizard-step active" type="button" data-step-target="0">
+              <span>1</span>
+              <strong>超级管理员</strong>
+            </button>
+            <button class="wizard-step" type="button" data-step-target="1">
+              <span>2</span>
+              <strong>Bitbucket</strong>
+            </button>
+            <button class="wizard-step" type="button" data-step-target="2">
+              <span>3</span>
+              <strong>存储</strong>
+            </button>
+            <button class="wizard-step" type="button" data-step-target="3">
+              <span>4</span>
+              <strong>本机环境</strong>
+            </button>
+            <button class="wizard-step" type="button" data-step-target="4">
+              <span>5</span>
+              <strong>任务策略</strong>
+            </button>
+          </nav>
+
+          <section class="wizard-pane active" data-step="0">
+            <div class="section-title">
+              <h2>超级管理员</h2>
+              <p>超级管理员可以管理用户、分配角色，并维护平台级设置。</p>
+            </div>
+            <label>
+              <span>显示名</span>
+              <input id="initDisplayName" autocomplete="name" placeholder="Ada Lee" required />
+            </label>
+            <label>
+              <span>用户名</span>
+              <input id="initUsername" autocomplete="username" placeholder="ada.lee" required />
+            </label>
+            <label>
+              <span>Bitbucket 用户名/显示名</span>
+              <textarea id="initBitbucketNames" rows="3" placeholder="每行一个用户名或显示名"></textarea>
+            </label>
+            <label>
+              <span>仓库路径映射</span>
+              <textarea id="initRepoPathMappings" rows="5" placeholder="PROJECT/repo=/absolute/local/repo/path"></textarea>
+            </label>
+            <div class="helper-box">
+              <strong>映射格式</strong>
+              <span>每行一个仓库：PROJECT/repo=/absolute/local/repo/path。可用 * 作为兜底路径。</span>
+            </div>
+          </section>
+
+          <section class="wizard-pane" data-step="1">
+            <div class="section-title">
+              <h2>Bitbucket 连接</h2>
+              <p>Token 用于同步 PR、检测本人评论、自动 review 和 approve。</p>
+            </div>
+            <label>
+              <span>Bitbucket 地址</span>
+              <input id="initBaseUrl" value="https://bitbucket.example.com" />
+            </label>
+            <label>
+              <span>Access Token</span>
+              <textarea
+                id="initBitbucketToken"
+                rows="4"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="粘贴 Bitbucket access token，保存后不会在页面回显"
+              ></textarea>
+            </label>
+            <div id="initTokenPreview" class="auth-status-card" aria-live="polite">
+              <strong>等待测试连接</strong>
+              <span>输入 token 后点击测试，确认可以读取 PR 看板。</span>
+            </div>
+            <div class="form-actions">
+              <button id="testInitTokenBtn" type="button">测试 Bitbucket</button>
+              <span id="initTokenStatus" class="save-status" aria-live="polite"></span>
+            </div>
+          </section>
+
+          <section class="wizard-pane" data-step="2">
+            <div class="section-title">
+              <h2>存储配置</h2>
+              <p>初始化会先测试连接、自动建表，再写入平台初始数据。</p>
+            </div>
+            <fieldset class="driver-fieldset">
+              <legend>选择存储后端</legend>
+              <div class="choice-grid">
+                <label class="choice-card">
+                  <input type="radio" name="initStorageDriverChoice" value="local-file" />
+                  <span>
+                    <strong>本地文件</strong>
+                    <small>适合个人本地运行，支持普通 JSON 和 gzip 压缩 JSON。</small>
+                  </span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="initStorageDriverChoice" value="sqlite" />
+                  <span>
+                    <strong>SQLite 数据库</strong>
+                    <small>适合稳定的单机数据库文件，使用 sqlite:// 或 file:// 地址。</small>
+                  </span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="initStorageDriverChoice" value="mysql" />
+                  <span>
+                    <strong>MySQL 数据库</strong>
+                    <small>适合长期运行或多设备共享，使用 mysql:// 或 mariadb:// 地址。</small>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="storage-pane" data-init-storage-pane="local-file">
+              <label>
+                <span>本地文件路径</span>
+                <input id="initStorageFilePath" placeholder="data/store.json 或 data/store.json.gz" />
+              </label>
+              <label class="check">
+                <input id="initStorageCompressed" type="checkbox" />
+                <span>使用 gzip 压缩写入，并兼容读取 gzip 数据</span>
+              </label>
+            </div>
+
+            <div class="storage-pane" data-init-storage-pane="database">
+              <fieldset class="driver-fieldset">
+                <legend>数据库地址配置方式</legend>
+                <div class="segmented">
+                  <label>
+                    <input type="radio" name="initDatabaseInputMode" value="full" />
+                    <span>填写完整地址</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="initDatabaseInputMode" value="parts" />
+                    <span>按字段生成</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <div class="database-mode" data-init-database-mode="full">
+                <label>
+                  <span>数据库地址</span>
+                  <input id="initStorageDatabaseUrl" placeholder="mysql://user:password@127.0.0.1:3306/prmonitor" />
+                </label>
+              </div>
+
+              <div class="database-mode" data-init-database-mode="parts">
+                <div class="db-builder-grid">
+                  <label>
+                    <span>驱动</span>
+                    <select id="initStorageDbEngine">
+                      <option value="sqlite">SQLite</option>
+                      <option value="file">SQLite file</option>
+                      <option value="mysql">MySQL</option>
+                      <option value="mariadb">MariaDB</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>IP / Host</span>
+                    <input id="initStorageDbHost" placeholder="127.0.0.1" />
+                  </label>
+                  <label>
+                    <span>端口</span>
+                    <input id="initStorageDbPort" inputmode="numeric" placeholder="3306" />
+                  </label>
+                  <label>
+                    <span>数据库名 / 文件路径</span>
+                    <input id="initStorageDbName" placeholder="/absolute/path/pr-monitor.sqlite 或 prmonitor" />
+                  </label>
+                  <label>
+                    <span>用户名</span>
+                    <input id="initStorageDbUser" autocomplete="username" placeholder="可留空" />
+                  </label>
+                  <label>
+                    <span>密码</span>
+                    <input id="initStorageDbPassword" type="password" autocomplete="current-password" placeholder="可留空" />
+                  </label>
+                  <label class="wide-field">
+                    <span>连接参数</span>
+                    <input id="initStorageDbParams" placeholder="connect_timeout=10" />
+                  </label>
+                  <label class="wide-field">
+                    <span>生成的数据库地址</span>
+                    <input id="initStorageDatabasePreview" readonly />
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div id="initStoragePreview" class="migration-preview" aria-live="polite"></div>
+            <div class="form-actions">
+              <button id="testInitStorageBtn" type="button">测试存储连接</button>
+              <span id="initStorageStatus" class="save-status" aria-live="polite"></span>
+            </div>
+          </section>
+
+          <section class="wizard-pane" data-step="3">
+            <div class="section-title">
+              <h2>本机环境检测</h2>
+              <p>自动 review 需要 Codex CLI、bitbucket-pr-review skill 和可读仓库路径。</p>
+            </div>
+            <div id="initEnvironmentList" class="environment-list" aria-live="polite"></div>
+            <div class="form-actions">
+              <button id="checkEnvironmentBtn" type="button">重新检测</button>
+              <span id="initEnvironmentStatus" class="save-status" aria-live="polite"></span>
+            </div>
+          </section>
+
+          <section class="wizard-pane" data-step="4">
+            <div class="section-title">
+              <h2>任务策略</h2>
+              <p>控制 PR 同步频率，以及是否发现新待评审 PR 后自动 review。</p>
+            </div>
+            <label>
+              <span>轮询间隔（分钟）</span>
+              <input id="initIntervalMinutes" type="number" min="1" step="1" value="15" />
+            </label>
+            <label class="check">
+              <input id="initSchedulerEnabled" type="checkbox" />
+              <span>初始化后启用定时任务</span>
+            </label>
+            <label class="check">
+              <input id="initAutoReviewEnabled" type="checkbox" />
+              <span>发现新待评审 PR 后自动创建并执行 review</span>
+            </label>
+            <label class="check danger">
+              <input id="initDangerousBypass" type="checkbox" />
+              <span>允许 Codex 自动执行评论所需命令</span>
+            </label>
+            <div id="initSummary" class="summary-list" aria-live="polite"></div>
+          </section>
+
+          <div class="wizard-nav">
+            <button id="prevStepBtn" type="button">上一步</button>
+            <button id="nextStepBtn" type="button">下一步</button>
+            <button id="finishInitBtn" class="primary" type="submit">完成初始化</button>
+            <span id="initStatus" class="save-status" aria-live="polite"></span>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script src="/init.js" type="module"></script>
+  </body>
+</html>

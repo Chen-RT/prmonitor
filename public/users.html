@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>用户管理 · PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell settings-shell">
+      <header class="topbar">
+        <a class="brand-block brand-link" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>用户管理</h1>
+            <p id="usersSubtitle">超级管理员功能</p>
+          </div>
+        </a>
+        <div class="actions">
+          <a class="button-link" href="/">返回监控台</a>
+          <a class="button-link" href="/settings.html">平台设置</a>
+          <a class="button-link" href="/logs.html">日志</a>
+        </div>
+      </header>
+
+      <section class="settings-grid">
+        <form id="createUserForm" class="panel settings-card">
+          <div class="section-title">
+            <h2>新建用户</h2>
+            <p>创建后可以在首页用户菜单中切换到该用户。</p>
+          </div>
+          <label>
+            <span>显示名</span>
+            <input id="newDisplayName" required />
+          </label>
+          <label>
+            <span>用户名</span>
+            <input id="newUsername" required />
+          </label>
+          <label>
+            <span>身份</span>
+            <select id="newRole">
+              <option value="user">普通用户</option>
+              <option value="admin">管理员</option>
+              <option value="super-admin">超级管理员</option>
+            </select>
+          </label>
+          <label>
+            <span>Bitbucket 用户名/显示名</span>
+            <textarea id="newBitbucketNames" rows="3"></textarea>
+          </label>
+          <label>
+            <span>仓库路径映射</span>
+            <textarea id="newRepoPathMappings" rows="5"></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="primary" type="submit">创建用户</button>
+            <span id="createUserStatus" class="save-status" aria-live="polite"></span>
+          </div>
+        </form>
+
+        <section class="panel settings-card user-admin-card">
+          <div class="section-title">
+            <h2>用户列表</h2>
+            <p>超级管理员负责账号与角色；管理员负责平台设置；普通用户只维护个人设置。</p>
+          </div>
+          <div id="usersTable"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/users.js" type="module"></script>
+  </body>
+</html>

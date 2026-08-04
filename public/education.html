@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ClayLearn | Playful Online Learning</title>
+    <meta
+      name="description"
+      content="A playful educational platform landing page with course previews, progress tracking, student stories, and an enrollment call to action."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/education.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#courses">Skip to course catalog</a>
+    <header class="site-header" aria-label="Main navigation">
+      <a class="brand" href="/education.html" aria-label="ClayLearn home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" role="img">
+            <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+            <path d="M15 15h10M15 21h7" />
+          </svg>
+        </span>
+        <span>ClayLearn</span>
+      </a>
+      <nav class="nav-links" aria-label="Page sections">
+        <a href="#courses">Courses</a>
+        <a href="#progress">Progress</a>
+        <a href="#stories">Stories</a>
+      </nav>
+      <a class="header-cta" href="#enroll">Enroll now</a>
+    </header>
+
+    <main>
+      <section class="hero section-band">
+        <div class="hero-copy">
+          <p class="eyebrow">For curious students ages 8-16</p>
+          <h1>Learn big ideas through tiny playful wins.</h1>
+          <p class="hero-text">
+            ClayLearn turns math, coding, science, and storytelling into colorful bite-size quests,
+            guided by friendly mentors and trackable progress.
+          </p>
+          <div class="hero-actions" aria-label="Primary calls to action">
+            <a class="button button-primary" href="#enroll">Start learning</a>
+            <a class="button button-secondary" href="#progress">View demo</a>
+          </div>
+          <dl class="hero-stats" aria-label="Platform highlights">
+            <div>
+              <dt>42k</dt>
+              <dd>active learners</dd>
+            </div>
+            <div>
+              <dt>4.9</dt>
+              <dd>family rating</dd>
+            </div>
+            <div>
+              <dt>12 min</dt>
+              <dd>daily quests</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="hero-visual" aria-label="Student learning dashboard preview">
+          <div class="clay-orbit clay-yellow" aria-hidden="true"></div>
+          <div class="clay-orbit clay-coral" aria-hidden="true"></div>
+          <div class="dashboard-card">
+            <div class="dashboard-top">
+              <div>
+                <span class="mini-label">Today</span>
+                <strong>Space Math Quest</strong>
+              </div>
+              <span class="level-pill">Level 7</span>
+            </div>
+            <div class="lesson-map" aria-hidden="true">
+              <span class="map-node done"></span>
+              <span class="map-path"></span>
+              <span class="map-node done"></span>
+              <span class="map-path"></span>
+              <span class="map-node active"></span>
+              <span class="map-path muted"></span>
+              <span class="map-node"></span>
+            </div>
+            <div class="mentor-row">
+              <div class="clay-face" aria-hidden="true">
+                <span></span>
+                <span></span>
+              </div>
+              <div>
+                <strong>Mentor Mira says</strong>
+                <p>Great streak. Try the comet puzzle next.</p>
+              </div>
+            </div>
+          </div>
+          <div class="floating-badge badge-left">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3 4 7l8 4 8-4-8-4Z" />
+              <path d="M4 11l8 4 8-4M4 15l8 4 8-4" />
+            </svg>
+            <span>Creative labs</span>
+          </div>
+          <div class="floating-badge badge-right">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 19V5m0 14h16M8 16v-5m4 5V8m4 8v-3" />
+            </svg>
+            <span>Live progress</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="courses" class="courses section-band" aria-labelledby="courses-title">
+        <div class="section-heading">
+          <p class="eyebrow">Course catalog preview</p>
+          <h2 id="courses-title">Pick a learning adventure.</h2>
+          <p>Each course blends short lessons, hands-on challenges, and mentor feedback.</p>
+        </div>
+        <div class="course-grid">
+          <article class="clay-card course-card">
+            <div class="course-icon icon-indigo" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M8 18 3 12l5-6M16 6l5 6-5 6M13 4l-2 16" />
+              </svg>
+            </div>
+            <span class="course-meta">Coding · 18 quests</span>
+            <h3>Robot Logic Lab</h3>
+            <p>Build loops, conditions, and tiny games with visual programming puzzles.</p>
+          </article>
+          <article class="clay-card course-card">
+            <div class="course-icon icon-orange" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 3v18M5 8h14M7 16h10M8 3h8" />
+              </svg>
+            </div>
+            <span class="course-meta">Math · 22 quests</span>
+            <h3>Galaxy Numbers</h3>
+            <p>Practice fractions, ratios, and patterns with story-driven space missions.</p>
+          </article>
+          <article class="clay-card course-card">
+            <div class="course-icon icon-mint" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M9 3h6M10 3v5l-5 9a3 3 0 0 0 3 4h8a3 3 0 0 0 3-4l-5-9V3" />
+                <path d="M8 16h8" />
+              </svg>
+            </div>
+            <span class="course-meta">Science · 14 quests</span>
+            <h3>Kitchen Chemistry</h3>
+            <p>Explore reactions, measurements, and observation with safe at-home experiments.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="progress" class="progress section-band" aria-labelledby="progress-title">
+        <div class="progress-demo clay-card">
+          <div class="section-heading compact">
+            <p class="eyebrow">Progress tracking demo</p>
+            <h2 id="progress-title">A dashboard students actually want to open.</h2>
+            <p>Clear milestones make effort visible without turning learning into pressure.</p>
+          </div>
+          <div class="progress-board" aria-label="Weekly learner progress">
+            <div class="progress-item">
+              <span>Quest streak</span>
+              <strong>9 days</strong>
+              <div class="bar" aria-hidden="true"><span style="--value: 82%"></span></div>
+            </div>
+            <div class="progress-item">
+              <span>Creative projects</span>
+              <strong>6 shipped</strong>
+              <div class="bar coral" aria-hidden="true"><span style="--value: 64%"></span></div>
+            </div>
+            <div class="progress-item">
+              <span>Mentor feedback</span>
+              <strong>14 notes</strong>
+              <div class="bar mint" aria-hidden="true"><span style="--value: 74%"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="weekly-card clay-card" aria-label="Weekly schedule preview">
+          <h3>This week</h3>
+          <ul>
+            <li><span>Mon</span> Pattern puzzle</li>
+            <li><span>Wed</span> Mentor checkpoint</li>
+            <li><span>Fri</span> Build-and-share lab</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="stories" class="stories section-band" aria-labelledby="stories-title">
+        <div class="section-heading">
+          <p class="eyebrow">Student testimonials</p>
+          <h2 id="stories-title">Families feel the momentum.</h2>
+        </div>
+        <div class="testimonial-grid">
+          <figure class="clay-card testimonial">
+            <blockquote>
+              "My daughter used to freeze on word problems. Now she explains her thinking out loud."
+            </blockquote>
+            <figcaption>
+              <span class="avatar avatar-blue">AL</span>
+              <div><strong>Ari L.</strong><span>Parent of a 5th grader</span></div>
+            </figcaption>
+          </figure>
+          <figure class="clay-card testimonial featured">
+            <blockquote>
+              "It feels like a game, but my coding notebook is suddenly full of real ideas."
+            </blockquote>
+            <figcaption>
+              <span class="avatar avatar-orange">JM</span>
+              <div><strong>Jules M.</strong><span>Middle school learner</span></div>
+            </figcaption>
+          </figure>
+          <figure class="clay-card testimonial">
+            <blockquote>
+              "The progress view helped us celebrate consistency instead of just test scores."
+            </blockquote>
+            <figcaption>
+              <span class="avatar avatar-green">NR</span>
+              <div><strong>Noor R.</strong><span>Homeschool teacher</span></div>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="enroll" class="enroll section-band" aria-labelledby="enroll-title">
+        <div class="enroll-panel">
+          <div>
+            <p class="eyebrow">Enrollment opens today</p>
+            <h2 id="enroll-title">Start with a free 7-day learning sprint.</h2>
+            <p>Choose three starter quests, meet a mentor, and get a family progress snapshot.</p>
+          </div>
+          <form class="signup" aria-label="Enrollment signup">
+            <label for="email">Parent or student email</label>
+            <div class="signup-row">
+              <input id="email" type="email" placeholder="learner@example.com" autocomplete="email" required />
+              <button class="button button-primary" type="submit">Join the sprint</button>
+            </div>
+            <p id="signupStatus" class="form-note" aria-live="polite">
+              No card required. Cancel anytime before the sprint ends.
+            </p>
+          </form>
+        </div>
+      </section>
+    </main>
+    <script src="/education.js" type="module"></script>
+  </body>
+</html>

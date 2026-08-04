@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>平台设置 · PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell settings-shell">
+      <header class="topbar">
+        <a class="brand-block brand-link" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>平台设置</h1>
+            <p id="platformSettingsSubtitle">任务调度、自动评审和存储后端配置</p>
+          </div>
+        </a>
+        <div class="actions">
+          <a class="button-link" href="/">返回监控台</a>
+          <a class="button-link" href="/user-settings.html">个人设置</a>
+          <a class="button-link" href="/logs.html">日志</a>
+        </div>
+      </header>
+
+      <section class="settings-grid">
+        <form id="taskSettingsForm" class="panel settings-card">
+          <div class="section-title">
+            <h2>任务设置</h2>
+            <p>控制 PR 同步频率，以及是否在发现新待评审 PR 后自动创建并执行 review。</p>
+          </div>
+          <label>
+            <span>轮询间隔（分钟）</span>
+            <input id="intervalMinutes" type="number" min="1" step="1" />
+          </label>
+          <label class="check">
+            <input id="schedulerEnabled" type="checkbox" />
+            <span>启用定时任务</span>
+          </label>
+          <label class="check">
+            <input id="autoReviewEnabled" type="checkbox" />
+            <span>发现新待评审 PR 后自动创建并执行 review</span>
+          </label>
+          <label class="check danger">
+            <input id="dangerousBypass" type="checkbox" />
+            <span>允许 Codex 自动执行评论所需命令</span>
+          </label>
+          <div class="scheduler" id="schedulerPreview"></div>
+          <div class="form-actions">
+            <button class="primary" type="submit">保存任务设置</button>
+            <span id="taskSaveStatus" class="save-status" aria-live="polite"></span>
+          </div>
+        </form>
+
+        <section id="storageSection" class="panel settings-card storage-card">
+          <div class="section-title">
+            <h2>存储设置</h2>
+            <p>管理员功能。切换存储前可测试连接；保存时会自动建表、迁移当前数据并读回校验。</p>
+          </div>
+
+          <div id="storagePermissionNotice" class="helper-box" hidden>
+            <strong>需要管理员权限</strong>
+            <span>当前用户不能修改存储配置，但仍可以查看当前存储状态。</span>
+          </div>
+
+          <div class="storage-summary" id="storageSummary"></div>
+
+          <form id="storageSettingsForm">
+            <fieldset class="driver-fieldset">
+              <legend>选择存储后端</legend>
+              <div class="choice-grid">
+                <label class="choice-card">
+                  <input type="radio" name="storageDriverChoice" value="local-file" />
+                  <span>
+                    <strong>本地文件</strong>
+                    <small>适合个人本地运行，支持普通 JSON 和 gzip 压缩 JSON。</small>
+                  </span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="storageDriverChoice" value="sqlite" />
+                  <span>
+                    <strong>SQLite 数据库</strong>
+                    <small>适合更稳定的单机数据库文件，使用 sqlite:// 或 file:// 地址。</small>
+                  </span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="storageDriverChoice" value="mysql" />
+                  <span>
+                    <strong>MySQL 数据库</strong>
+                    <small>适合长期运行或多设备共享，使用 mysql:// 或 mariadb:// 地址。</small>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="storage-pane" data-storage-pane="local-file">
+              <label>
+                <span>本地文件路径</span>
+                <input id="storageFilePath" placeholder="data/store.json 或 data/store.json.gz" />
+              </label>
+              <label class="check">
+                <input id="storageCompressed" type="checkbox" />
+                <span>使用 gzip 压缩写入，并兼容读取 gzip 数据</span>
+              </label>
+              <div class="helper-box">
+                <strong>建议</strong>
+                <span>普通可读文件用 data/store.json；希望节省空间或归档时用 data/store.json.gz 并启用 gzip。</span>
+              </div>
+            </div>
+
+            <div class="storage-pane" data-storage-pane="database">
+              <fieldset class="driver-fieldset">
+                <legend>数据库地址配置方式</legend>
+                <div class="segmented">
+                  <label>
+                    <input type="radio" name="databaseInputMode" value="full" />
+                    <span>填写完整地址</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="databaseInputMode" value="parts" />
+                    <span>按字段生成</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <div class="database-mode" data-database-mode="full">
+                <label>
+                  <span>数据库地址</span>
+                  <input id="storageDatabaseUrl" placeholder="sqlite:///absolute/path/pr-monitor.sqlite" />
+                </label>
+              </div>
+
+              <div class="database-mode" data-database-mode="parts">
+                <div class="db-builder-grid">
+                  <label>
+                    <span>驱动</span>
+                    <select id="storageDbEngine">
+                      <option value="sqlite">SQLite</option>
+                      <option value="file">SQLite file</option>
+                      <option value="postgresql">PostgreSQL</option>
+                      <option value="mysql">MySQL</option>
+                      <option value="mariadb">MariaDB</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>IP / Host</span>
+                    <input id="storageDbHost" placeholder="127.0.0.1" />
+                  </label>
+                  <label>
+                    <span>端口</span>
+                    <input id="storageDbPort" inputmode="numeric" placeholder="5432" />
+                  </label>
+                  <label>
+                    <span>数据库名 / 文件路径</span>
+                    <input id="storageDbName" placeholder="/absolute/path/pr-monitor.sqlite 或 pr_monitor" />
+                  </label>
+                  <label>
+                    <span>用户名</span>
+                    <input id="storageDbUser" autocomplete="username" placeholder="可留空" />
+                  </label>
+                  <label>
+                    <span>密码</span>
+                    <input id="storageDbPassword" type="password" autocomplete="current-password" placeholder="可留空" />
+                  </label>
+                  <label class="wide-field">
+                    <span>连接参数</span>
+                    <input id="storageDbParams" placeholder="sslmode=require&connect_timeout=10" />
+                  </label>
+                  <label class="wide-field">
+                    <span>生成的数据库地址</span>
+                    <input id="storageDatabasePreview" readonly />
+                  </label>
+                </div>
+              </div>
+              <div class="helper-box">
+                <strong>格式</strong>
+                <span>SQLite 支持 sqlite:// 或 file://；MySQL 支持 mysql:// 或 mariadb://。数据库需已存在，平台会自动创建用户、PR、任务、日志等业务表并同步当前数据。</span>
+              </div>
+            </div>
+
+            <div id="storageMigrationPreview" class="migration-preview" aria-live="polite"></div>
+            <div class="form-actions">
+              <button id="testStorageBtn" type="button">测试连接</button>
+              <button id="saveStorageBtn" class="primary" type="submit">保存并迁移</button>
+              <span id="storageSaveStatus" class="save-status" aria-live="polite"></span>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+    <script src="/settings-pages.js" type="module"></script>
+  </body>
+</html>

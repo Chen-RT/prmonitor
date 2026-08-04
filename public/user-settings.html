@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>个人设置 · PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell settings-shell">
+      <header class="topbar">
+        <a class="brand-block brand-link" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>个人设置</h1>
+            <p id="userSettingsSubtitle">正在读取用户信息</p>
+          </div>
+        </a>
+        <div class="actions">
+          <a class="button-link" href="/">返回监控台</a>
+          <a id="platformSettingsLink" class="button-link" href="/settings.html">平台设置</a>
+          <a id="userManagementLink" class="button-link" href="/users.html" hidden>用户管理</a>
+        </div>
+      </header>
+
+      <section class="settings-grid single">
+        <form id="userSettingsForm" class="panel settings-card">
+          <div class="section-title">
+            <h2>用户身份</h2>
+            <p>这些配置会影响 PR 归属、本人评论识别和本地仓库路径匹配。</p>
+          </div>
+          <label>
+            <span>显示名</span>
+            <input id="userDisplayName" autocomplete="name" />
+          </label>
+          <label>
+            <span>用户名</span>
+            <input id="userUsername" autocomplete="username" />
+          </label>
+          <label>
+            <span>Bitbucket 用户名/显示名</span>
+            <textarea id="userBitbucketNames" rows="4" placeholder="每行一个用户名或显示名"></textarea>
+          </label>
+          <label>
+            <span>仓库路径映射</span>
+            <textarea
+              id="userRepoPathMappings"
+              rows="8"
+              placeholder="BUSSINESS/nuclear-webui=/path/to/nuclear-webui&#10;I18N/plugin-bi-finebi-cli=/path/to/plugin-bi-finebi-cli"
+            ></textarea>
+          </label>
+          <div class="helper-box">
+            <strong>映射格式</strong>
+            <span>每行一个仓库：PROJECT/repo=/absolute/local/repo/path。可用 * 作为兜底路径。</span>
+          </div>
+          <div class="form-actions">
+            <button class="primary" type="submit">保存个人设置</button>
+            <span id="userSaveStatus" class="save-status" aria-live="polite"></span>
+          </div>
+        </form>
+
+        <form id="tokenSettingsForm" class="panel settings-card">
+          <div class="section-title">
+            <h2>Bitbucket 认证</h2>
+            <p>用于同步 PR、检测本人评论、执行自动 review 和 approve。</p>
+          </div>
+          <div id="tokenStatusCard" class="auth-status-card" aria-live="polite">
+            <strong>正在读取认证状态</strong>
+            <span>请稍候</span>
+          </div>
+          <label>
+            <span>Access Token</span>
+            <textarea
+              id="userBitbucketToken"
+              rows="4"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="粘贴 Bitbucket access token，保存后不会在页面回显"
+            ></textarea>
+          </label>
+          <div class="helper-box">
+            <strong>保存范围</strong>
+            <span>Token 会保存到当前用户配置，并同步到 bitbucket-pr-review skill 的本地认证文件，便于后台 Codex review 复用。</span>
+          </div>
+          <div class="form-actions">
+            <button class="primary" type="submit">保存 Token</button>
+            <button id="testTokenBtn" type="button">测试连接</button>
+            <button id="clearTokenBtn" class="danger-button" type="button">清除 Token</button>
+            <span id="tokenSaveStatus" class="save-status" aria-live="polite"></span>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script src="/settings-pages.js" type="module"></script>
+  </body>
+</html>

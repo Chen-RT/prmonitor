@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bitbucket PR Review"
+  short_description: "Review Bitbucket PRs and post precise inline comments."
+  default_prompt: "Use $bitbucket-pr-review to review this Bitbucket pull request, post inline comments for confirmed issues, and for frontend config-mutation changes also summarize the config flow and impacted operation scenarios for the user."

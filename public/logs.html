@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>日志 · PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell settings-shell logs-shell">
+      <header class="topbar">
+        <a class="brand-block brand-link" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>日志</h1>
+            <p id="logsSubtitle">平台事件日志</p>
+          </div>
+        </a>
+        <div class="actions">
+          <a class="button-link" href="/">返回监控台</a>
+          <a id="logsSettingsLink" class="button-link" href="/settings.html">平台设置</a>
+        </div>
+      </header>
+
+      <section class="logs-layout">
+        <section class="panel settings-card">
+          <div class="section-title">
+            <h2>日志表</h2>
+            <p>平台操作、同步、评审任务状态都会写入日志并随存储后端持久化。</p>
+          </div>
+          <div class="log-filters">
+            <label>
+              <span>类型</span>
+              <select id="logTypeFilter"></select>
+            </label>
+          </div>
+          <div id="logsTable"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/logs.js" type="module"></script>
+  </body>
+</html>

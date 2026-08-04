@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Runtime data and credentials
+data/
+outputs/
+work/
+.env
+.env.*
+!.env.example
+**/.local/
+**/bitbucket-auth.json
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.gz
+
+# Build artifacts
+dist/
+release/
+out/
+*.dmg
+*.exe
+*.zip
+*.AppImage
+
+# OS and editor files
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+
+# Test and coverage output
+coverage/
+.nyc_output/
