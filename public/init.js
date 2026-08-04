@@ -241,7 +241,7 @@ function renderSummary() {
     <div><span>Bitbucket</span><strong>${escapeHtml($('#initBaseUrl').value.trim() || '未填写')}</strong></div>
     <div><span>Token</span><strong>${tokenTested ? '已测试' : state?.token ? '将兜底使用 skill token' : '未测试'}</strong></div>
     <div><span>存储</span><strong>${storageLabel}${storageTested ? '，已测试' : '，未测试'}</strong></div>
-    <div><span>本机环境</span><strong>${environmentChecked ? '已检测' : '未检测'}</strong></div>
+    <div><span>本机环境</span><strong>${environmentChecked ? '已检测' : $('#initCodexExecutablePath')?.value.trim() ? '已填写 Codex 路径' : '未检测'}</strong></div>
     <div><span>自动 review</span><strong>${$('#initAutoReviewEnabled').checked ? '启用' : '关闭'}</strong></div>
   `;
 }
@@ -302,7 +302,9 @@ async function checkEnvironment() {
   button.disabled = true;
   setStatus('#initEnvironmentStatus', '检测中...', 'busy');
   try {
-    const result = await api('/api/init/environment');
+    const codexPath = $('#initCodexExecutablePath')?.value.trim() || '';
+    const query = codexPath ? `?codexExecutablePath=${encodeURIComponent(codexPath)}` : '';
+    const result = await api(`/api/init/environment${query}`);
     environmentChecked = true;
     renderEnvironment(result);
     setStatus('#initEnvironmentStatus', result.ok ? '环境检测通过' : '存在需要处理的环境项', result.ok ? 'ok' : 'error');
@@ -467,6 +469,13 @@ $$('input[name="initDatabaseInputMode"]').forEach((input) => {
   $(selector)?.addEventListener('change', renderSummary);
 });
 
+$('#initCodexExecutablePath')?.addEventListener('input', () => {
+  environmentChecked = false;
+  renderEnvironment();
+  renderSummary();
+  setStatus('#initEnvironmentStatus', '');
+});
+
 $('#initBitbucketToken')?.addEventListener('input', () => {
   tokenTested = false;
   renderTokenPreview();
@@ -494,6 +503,7 @@ $('#initForm')?.addEventListener('submit', async (event) => {
         schedulerEnabled: $('#initSchedulerEnabled').checked,
         autoReviewEnabled: $('#initAutoReviewEnabled').checked,
         dangerousBypass: $('#initDangerousBypass').checked,
+        codexExecutablePath: $('#initCodexExecutablePath')?.value.trim() || '',
         storage: storagePayloadFromForm()
       })
     });

@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, access, unlink } from 'node:fs/promises';
-import { constants, existsSync } from 'node:fs';
+import { constants, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
@@ -9,7 +9,7 @@ import { gzip, gunzip } from 'node:zlib';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4177);
-const HOME_DIR = process.env.HOME || '';
+const HOME_DIR = process.env.HOME || process.env.USERPROFILE || '';
 const PROJECT_SKILL_DIR = path.join(__dirname, 'app-resources', 'skills', 'bitbucket-pr-review');
 const LEGACY_USER_SKILL_DIR = path.join(HOME_DIR || process.cwd(), '.codex', 'skills', 'bitbucket-pr-review');
 const DEFAULT_SKILL_DIR = existsSync(path.join(PROJECT_SKILL_DIR, 'SKILL.md')) ? PROJECT_SKILL_DIR : LEGACY_USER_SKILL_DIR;
@@ -37,30 +37,58 @@ function expandedPath() {
     '/usr/local/bin',
     '/opt/homebrew/bin',
     path.join(HOME_DIR, '.local/bin')
-  ].filter(Boolean).join(':');
+  ].filter(Boolean).join(path.delimiter);
 }
 
-async function resolveCodexExecutable() {
+function codexExecutableNames() {
+  return process.platform === 'win32'
+    ? ['codex.cmd', 'codex.exe', 'codex.bat', 'codex']
+    : ['codex'];
+}
+
+async function executableExists(candidate) {
+  if (!candidate) return false;
+  try {
+    await access(candidate, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function configuredCodexCandidates(configuredPath) {
+  const normalized = String(configuredPath || '').trim();
+  if (!normalized) return [];
+  const resolved = path.resolve(normalized);
+  try {
+    if (statSync(resolved).isDirectory()) {
+      return codexExecutableNames().map((name) => path.join(resolved, name));
+    }
+  } catch {}
+  return [resolved];
+}
+
+async function resolveCodexExecutable(configuredPath = '') {
   const candidates = [
+    ...configuredCodexCandidates(configuredPath),
+    ...configuredCodexCandidates(process.env.PR_MONITOR_CODEX_PATH),
     '/usr/local/bin/codex',
     '/opt/homebrew/bin/codex',
     path.join(HOME_DIR, '.local/bin/codex'),
-    ...expandedPath().split(':').filter(Boolean).map((dir) => path.join(dir, 'codex'))
+    ...expandedPath().split(path.delimiter).filter(Boolean).flatMap((dir) => (
+      codexExecutableNames().map((name) => path.join(dir, name))
+    ))
   ];
   for (const candidate of [...new Set(candidates)]) {
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {}
+    if (await executableExists(candidate)) return candidate;
   }
   try {
-    const { stdout } = await execFileAsync('/usr/bin/which', ['codex'], {
-      env: { ...process.env, PATH: expandedPath() }
-    });
+    const command = process.platform === 'win32' ? 'where' : '/usr/bin/which';
+    const { stdout } = await execFileAsync(command, ['codex'], { env: { ...process.env, PATH: expandedPath() } });
     const resolved = stdout.trim().split('\n')[0];
     if (resolved) return resolved;
   } catch {}
-  throw new Error('找不到 codex 可执行文件。请确认已安装 Codex CLI，或把 codex 链接到 /usr/local/bin/codex 或 /opt/homebrew/bin/codex。');
+  throw new Error('找不到 codex 可执行文件。请确认已安装 Codex CLI，或手动填写 codex 所在目录/可执行文件路径。Windows 常见目录是 npm 全局 bin 目录，例如 C:\\Users\\<name>\\AppData\\Roaming\\npm。');
 }
 
 const defaultStore = () => ({
@@ -71,6 +99,7 @@ const defaultStore = () => ({
     schedulerEnabled: false,
     autoReviewEnabled: false,
     dangerousBypass: false,
+    codexExecutablePath: '',
     defaultRepoPath: ''
   },
   currentUserId: '',
@@ -1482,15 +1511,16 @@ async function testBitbucketToken(store, token) {
   };
 }
 
-async function checkRuntimeEnvironment() {
+async function checkRuntimeEnvironment(store = defaultStore(), overrides = {}) {
   const checks = [];
+  const configuredCodexPath = String(overrides.codexExecutablePath ?? store.settings?.codexExecutablePath ?? '').trim();
   try {
-    const codexPath = await resolveCodexExecutable();
+    const codexPath = await resolveCodexExecutable(configuredCodexPath);
     checks.push({
       id: 'codex',
       label: 'Codex CLI',
       ok: true,
-      message: `已找到：${codexPath}`,
+      message: configuredCodexPath ? `已通过手动路径找到：${codexPath}` : `已找到：${codexPath}`,
       path: codexPath
     });
   } catch (error) {
@@ -1498,7 +1528,7 @@ async function checkRuntimeEnvironment() {
       id: 'codex',
       label: 'Codex CLI',
       ok: false,
-      message: error.message
+      message: configuredCodexPath ? `手动路径不可用：${configuredCodexPath}。${error.message}` : error.message
     });
   }
 
@@ -1944,7 +1974,7 @@ async function runReviewJob(jobId) {
   job.beforeSelfCommentCount = pr.selfCommentCount || 0;
   let codexCommand = '';
   try {
-    codexCommand = await resolveCodexExecutable();
+    codexCommand = await resolveCodexExecutable(store.settings.codexExecutablePath);
   } catch (error) {
     job.status = 'failed';
     job.finishedAt = new Date().toISOString();
@@ -2024,7 +2054,8 @@ async function runReviewJob(jobId) {
     child = spawn(codexCommand, args, {
       cwd: repoPath,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: expandedPath() }
+      env: { ...process.env, PATH: expandedPath() },
+      shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(codexCommand)
     });
   } catch (error) {
     await handleChildError(error);
@@ -2516,7 +2547,20 @@ const server = createServer(async (request, response) => {
       if (store.initialized && Object.keys(store.users || {}).length) {
         throw new Error('平台已经初始化。');
       }
-      await sendJson(response, 200, await checkRuntimeEnvironment());
+      await sendJson(response, 200, await checkRuntimeEnvironment(store, {
+        codexExecutablePath: url.searchParams.get('codexExecutablePath') || ''
+      }));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/environment') {
+      const store = await ensureStore();
+      if (!canManagePlatform(currentUser(store))) {
+        throw new Error('只有超级管理员或管理员可以检测平台环境。');
+      }
+      await sendJson(response, 200, await checkRuntimeEnvironment(store, {
+        codexExecutablePath: url.searchParams.get('codexExecutablePath') || store.settings.codexExecutablePath || ''
+      }));
       return;
     }
 
@@ -2594,7 +2638,8 @@ const server = createServer(async (request, response) => {
         intervalMinutes: Math.max(1, Number(body.intervalMinutes || store.settings.intervalMinutes || 15)),
         schedulerEnabled: Boolean(body.schedulerEnabled),
         autoReviewEnabled: Boolean(body.autoReviewEnabled),
-        dangerousBypass: Boolean(body.dangerousBypass)
+        dangerousBypass: Boolean(body.dangerousBypass),
+        codexExecutablePath: String(body.codexExecutablePath || '').trim()
       };
       if (token) {
         await syncLegacyTokenFile(store.users[userId]);
@@ -2639,6 +2684,9 @@ const server = createServer(async (request, response) => {
         schedulerEnabled: body.schedulerEnabled ?? store.settings.schedulerEnabled,
         autoReviewEnabled: body.autoReviewEnabled ?? store.settings.autoReviewEnabled,
         dangerousBypass: body.dangerousBypass ?? store.settings.dangerousBypass,
+        codexExecutablePath: body.codexExecutablePath !== undefined
+          ? String(body.codexExecutablePath || '').trim()
+          : (store.settings.codexExecutablePath || ''),
         intervalMinutes: Math.max(1, Number(body.intervalMinutes ?? store.settings.intervalMinutes))
       };
       addEvent(store, 'settings', '设置已更新');

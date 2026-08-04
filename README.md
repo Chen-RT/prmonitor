@@ -53,6 +53,13 @@ PORT=4177
 PR_MONITOR_DEFAULT_BITBUCKET_URL=https://bitbucket.example.com
 PR_MONITOR_DATA_DIR=/absolute/path/to/pr-monitor-data
 BITBUCKET_PR_REVIEW_SKILL_DIR=/absolute/path/to/bitbucket-pr-review
+PR_MONITOR_CODEX_PATH=/absolute/path/to/codex
+```
+
+`PR_MONITOR_CODEX_PATH` may point to either the `codex` executable or the directory that contains it. On Windows, the npm global bin directory is commonly similar to:
+
+```text
+C:\Users\<name>\AppData\Roaming\npm
 ```
 
 Storage options:

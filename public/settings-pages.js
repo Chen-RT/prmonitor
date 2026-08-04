@@ -262,6 +262,7 @@ function renderPlatformPage() {
   $('#schedulerEnabled').checked = Boolean(state.settings.schedulerEnabled);
   $('#autoReviewEnabled').checked = Boolean(state.settings.autoReviewEnabled);
   $('#dangerousBypass').checked = Boolean(state.settings.dangerousBypass);
+  $('#codexExecutablePath').value = state.settings.codexExecutablePath || '';
   $('#schedulerPreview').innerHTML = `
     <div>定时任务：${state.scheduler.running ? '运行中' : '已停止'}</div>
     <div>上次执行：${formatTime(state.scheduler.lastRunAt)}</div>
@@ -420,12 +421,30 @@ $('#taskSettingsForm')?.addEventListener('submit', async (event) => {
         intervalMinutes: $('#intervalMinutes').value,
         schedulerEnabled: $('#schedulerEnabled').checked,
         autoReviewEnabled: $('#autoReviewEnabled').checked,
-        dangerousBypass: $('#dangerousBypass').checked
+        dangerousBypass: $('#dangerousBypass').checked,
+        codexExecutablePath: $('#codexExecutablePath')?.value.trim() || ''
       })
     });
     state = result.state || result;
     renderPlatformPage();
     setStatus('#taskSaveStatus', '已保存');
+  } catch (error) {
+    setStatus('#taskSaveStatus', error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#testCodexPathBtn')?.addEventListener('click', async () => {
+  const button = $('#testCodexPathBtn');
+  button.disabled = true;
+  setStatus('#taskSaveStatus', '检测 Codex 中...', 'busy');
+  try {
+    const codexPath = $('#codexExecutablePath')?.value.trim() || '';
+    const query = codexPath ? `?codexExecutablePath=${encodeURIComponent(codexPath)}` : '';
+    const result = await api(`/api/environment${query}`);
+    const codex = result.checks?.find((check) => check.id === 'codex');
+    setStatus('#taskSaveStatus', codex?.message || (result.ok ? '环境检测通过' : '存在需要处理的环境项'), codex?.ok ? 'ok' : 'error');
   } catch (error) {
     setStatus('#taskSaveStatus', error.message, 'error');
   } finally {
