@@ -118,6 +118,7 @@ Use those line numbers for the comment payload.
   - Store the confirmed token in `.local/bitbucket-auth.json` under the skill directory, not in `SKILL.md`, scripts, or committed reference files.
   - Store small metadata next to it, such as `username`, `displayName`, and `updatedAt`, so future reviews can ask the user whether to reuse that identity.
   - On later runs, if the file exists, ask the user to confirm reuse of that stored token before reviewing.
+  - Exception: when invoked by PR Monitor automation and the prompt explicitly says token reuse is already allowed, reuse the saved `accessToken` without asking.
   - If the user declines, or if the stored token no longer works, ask for a fresh token and overwrite the local file after validation.
 - Before reviewing a PR, ask the user for an access token if no confirmed stored token is available.
 - Prefer `Authorization: Bearer <token>` when the user gives an API key.

@@ -9,6 +9,8 @@ Review the PR against its real target commit, not the current local branch. Post
 
 This skill may keep a previously confirmed Bitbucket `accessToken` in a local file under the skill directory so the user does not need to resend it every time. When no confirmed local token is available, ask the user for an `accessToken` before starting the review. Do not assume browser cookies, local credential helpers, or cached auth are acceptable substitutes.
 
+When invoked by PR Monitor automation, the prompt will explicitly include a PR URL, a local repository directory, an auth file path, and wording that the user already allowed reuse of the saved token. In that automation mode, do not ask whether to reuse the saved token and do not ask what action to perform. Reuse the local `accessToken`, review the supplied PR, and finish with one of the required `REVIEW_RESULT` lines.
+
 Read [references/bitbucket-api.md](references/bitbucket-api.md) when you need the exact REST endpoints, auth pattern, or comment payload shape.
 
 ## Workflow
@@ -21,6 +23,7 @@ Use this flow when the user asks how many PRs need their review, asks for their 
 
 - First check for a local token file at `.local/bitbucket-auth.json` under this skill directory.
 - If that file exists, read the stored metadata and explicitly ask the user whether to reuse that token, for example by naming the stored username or display name.
+- Exception: if the prompt says PR Monitor automation already allowed token reuse, reuse the saved `accessToken` without asking.
 - If the user declines reuse, or if no local token file exists, stop and ask for a fresh `accessToken` before continuing.
 - Prefer `Authorization: Bearer <token>` when querying.
 
@@ -47,6 +50,7 @@ Use this flow when the user asks how many PRs need their review, asks for their 
 - Parse `project`, `repo`, and `pull request id` from the URL if the user gives a full Bitbucket link.
 - First check for a local token file at `.local/bitbucket-auth.json` under this skill directory.
 - If that file exists, read the stored metadata and explicitly ask the user whether to reuse that token, for example by naming the stored username or display name.
+- Exception: if the prompt says PR Monitor automation already allowed token reuse, reuse the saved `accessToken` without asking.
 - If the user declines reuse, or if no local token file exists, stop and ask for a fresh `accessToken` before continuing.
 - After the user provides a fresh token and it is successfully validated, store it in `.local/bitbucket-auth.json` together with small identity metadata such as `username`, `displayName`, and `updatedAt`.
 - Confirm the local repo matches the PR repo before fetching anything.
@@ -116,7 +120,7 @@ Use this flow when the user asks how many PRs need their review, asks for their 
 - Do not assume the PR branch is already present locally.
 - Do not post review comments against files from the user’s branch when the PR branch content differs.
 - Do not assume you can list all comments without a `path` filter; Bitbucket comment APIs may require file scoping for retrieval.
-- Do not start the review without either getting user confirmation to reuse the stored token or collecting a fresh `accessToken`.
+- Do not start the review without either getting user confirmation to reuse the stored token, collecting a fresh `accessToken`, or receiving an explicit PR Monitor automation prompt that already confirms token reuse.
 - Do not forget the severity prefix in inline comments or the final findings list.
 - Do not artificially cap the number of review comments; disclose all confirmed findings that meet the severity threshold.
 - Do not claim testing happened if the test environment failed before execution.

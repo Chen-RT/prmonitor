@@ -1788,6 +1788,7 @@ async function pathExists(candidate) {
 function buildReviewPrompt(pr, settings) {
   return [
     `[$bitbucket-pr-review](${path.join(SKILL_DIR, 'SKILL.md')})`,
+    'PR Monitor 自动化任务：这是非交互执行，不要向用户提问，也不要等待 stdin。',
     '请评审这个 Bitbucket PR，并把确认的问题以中文 Bitbucket inline comment 发布到 PR 上。',
     '用户已经在 PR 监控平台中启用自动评审，确认允许复用本地已保存的 Bitbucket token；不要再向用户索要 token。',
     `认证文件: ${TOKEN_FILE}`,
