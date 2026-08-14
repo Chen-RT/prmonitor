@@ -78,6 +78,8 @@ function renderLogsTable() {
 
 function render() {
   $('#logsSettingsLink').hidden = !state.permissions?.canManagePlatform;
+  $('#logsWebhookLink').hidden = !state.permissions?.canManagePlatform;
+  $('#logsReviewStandardsLink').hidden = !state.permissions?.canManagePlatform;
   $('#logsSubtitle').textContent = state.permissions?.canViewAllUsers
     ? '当前展示所有用户的日志'
     : '当前仅展示本人日志';

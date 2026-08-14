@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>评审标准 · PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell settings-shell review-standards-shell">
+      <header class="topbar">
+        <a class="brand-block brand-link" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>评审标准</h1>
+            <p>按仓库配置检查重点和评论级别</p>
+          </div>
+        </a>
+        <div class="actions">
+          <a class="button-link" href="/">返回监控台</a>
+          <a class="button-link" href="/webhooks.html">Webhook</a>
+          <a class="button-link" href="/settings.html">平台设置</a>
+          <a class="button-link" href="/logs.html">日志</a>
+        </div>
+      </header>
+
+      <section class="review-standards-page">
+        <section class="standards-workspace">
+          <aside class="panel settings-card standard-list-panel">
+            <div class="standard-list-heading">
+              <div class="section-title">
+                <h2>标准</h2>
+                <p id="standardCount">0 个自定义标准</p>
+              </div>
+              <button id="newStandardBtn" class="primary" type="button">新建</button>
+            </div>
+            <div id="standardList" class="standard-list" role="listbox"></div>
+          </aside>
+
+          <form id="standardForm" class="panel settings-card standard-editor-panel">
+            <div class="standard-editor-heading">
+              <div class="section-title">
+                <h2 id="standardEditorTitle">评审标准</h2>
+                <p id="standardEditorMeta"></p>
+              </div>
+              <div class="row-actions">
+                <button id="copyStandardBtn" type="button">复制</button>
+                <button id="setDefaultStandardBtn" type="button">设为默认</button>
+                <button id="deleteStandardBtn" class="danger-button" type="button">删除</button>
+              </div>
+            </div>
+
+            <div class="standard-fields-row">
+              <label>
+                <span>名称</span>
+                <input id="standardName" maxlength="80" required />
+              </label>
+              <label>
+                <span>描述</span>
+                <input id="standardDescription" maxlength="500" />
+              </label>
+            </div>
+
+            <div class="standard-mode-row">
+              <label class="check">
+                <input id="standardEnabled" type="checkbox" />
+                <span>启用</span>
+              </label>
+              <fieldset class="driver-fieldset severity-fieldset">
+                <legend>最低评论级别</legend>
+                <div class="segmented severity-segmented">
+                  <label><input type="radio" name="minimumSeverity" value="P0" /><span>P0</span></label>
+                  <label><input type="radio" name="minimumSeverity" value="P1" /><span>P1</span></label>
+                  <label><input type="radio" name="minimumSeverity" value="P2" /><span>P2</span></label>
+                </div>
+              </fieldset>
+            </div>
+
+            <label>
+              <span>通用评审要求</span>
+              <textarea id="standardInstructions" rows="7" maxlength="16000" placeholder="例如：重点检查状态生命周期、兼容路径和持久化回读。"></textarea>
+            </label>
+
+            <section class="path-rules-section">
+              <div class="path-rules-heading">
+                <div>
+                  <strong>文件路径补充规则</strong>
+                  <span id="pathRuleCount">0 / 50</span>
+                </div>
+                <button id="addPathRuleBtn" type="button">添加规则</button>
+              </div>
+              <div id="pathRulesList" class="path-rules-list"></div>
+            </section>
+
+            <details class="standard-preview" open>
+              <summary>Prompt 预览</summary>
+              <pre id="standardPromptPreview"></pre>
+            </details>
+
+            <div class="form-actions">
+              <button id="saveStandardBtn" class="primary" type="submit">保存标准</button>
+              <span id="standardSaveStatus" class="save-status" aria-live="polite"></span>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel settings-card repository-bindings-panel">
+          <div class="binding-heading">
+            <div class="section-title">
+              <h2>仓库绑定</h2>
+              <p id="bindingSummary">未绑定的仓库使用默认标准</p>
+            </div>
+            <div class="binding-add-row">
+              <input id="bindingProject" placeholder="PROJECT" aria-label="Project" />
+              <input id="bindingRepo" placeholder="repository-slug" aria-label="Repository slug" />
+              <button id="addRepositoryBindingBtn" type="button">添加仓库</button>
+            </div>
+          </div>
+          <div id="repositoryBindingsTable" class="repository-bindings-table"></div>
+          <div class="form-actions">
+            <button id="saveBindingsBtn" class="primary" type="button">保存仓库绑定</button>
+            <span id="bindingSaveStatus" class="save-status" aria-live="polite"></span>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/review-standards.js" type="module"></script>
+  </body>
+</html>

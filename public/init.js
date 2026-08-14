@@ -303,8 +303,11 @@ async function checkEnvironment() {
   setStatus('#initEnvironmentStatus', '检测中...', 'busy');
   try {
     const codexPath = $('#initCodexExecutablePath')?.value.trim() || '';
-    const query = codexPath ? `?codexExecutablePath=${encodeURIComponent(codexPath)}` : '';
-    const result = await api(`/api/init/environment${query}`);
+    const repoPathMappings = $('#initRepoPathMappings')?.value.trim() || '';
+    const query = new URLSearchParams();
+    if (codexPath) query.set('codexExecutablePath', codexPath);
+    if (repoPathMappings) query.set('repoPathMappings', repoPathMappings);
+    const result = await api(`/api/init/environment${query.size ? `?${query}` : ''}`);
     environmentChecked = true;
     renderEnvironment(result);
     setStatus('#initEnvironmentStatus', result.ok ? '环境检测通过' : '存在需要处理的环境项', result.ok ? 'ok' : 'error');
