@@ -11,6 +11,8 @@ PR Monitor is a desktop and local web app for tracking Bitbucket pull requests t
 - PR buckets for awaiting review, reviewed but not approved, approved, and imported PRs.
 - Review job execution with streamed AI output shown on the job card.
 - Manual PR import, manual approve, and scheduled auto-review for new pending PRs.
+- HMAC-verified Bitbucket webhooks for PR creation and source-branch updates.
+- Repository-specific review standards with versioned task snapshots and path rules.
 - Storage backends: local JSON, gzip-compressed local JSON, SQLite, and MySQL/MariaDB.
 - Storage migration with connection testing, automatic table creation, and data synchronization.
 - Electron desktop packaging for macOS and Windows.
@@ -54,6 +56,7 @@ PR_MONITOR_DEFAULT_BITBUCKET_URL=https://bitbucket.example.com
 PR_MONITOR_DATA_DIR=/absolute/path/to/pr-monitor-data
 BITBUCKET_PR_REVIEW_SKILL_DIR=/absolute/path/to/bitbucket-pr-review
 PR_MONITOR_CODEX_PATH=/absolute/path/to/codex
+PR_MONITOR_WEBHOOK_SECRET=replace-with-a-random-secret
 ```
 
 `PR_MONITOR_CODEX_PATH` may point to either the `codex` executable or the directory that contains it. On Windows, the npm global bin directory is commonly similar to:
@@ -71,6 +74,45 @@ Storage options:
 - MariaDB: `mariadb://user:password@host:3306/prmonitor`
 
 The database must exist before connecting. The app creates and migrates its own business tables.
+
+## Bitbucket Webhook
+
+Platform administrators can configure the webhook entry at:
+
+```text
+http://localhost:4177/webhooks.html
+```
+
+The public endpoint is:
+
+```text
+POST /api/webhooks/bitbucket
+```
+
+Configure Bitbucket to send `pr:opened` and `pr:from_ref_updated` events. The handler verifies the raw request body with HMAC-SHA256 and accepts `X-Hub-Signature`, `X-Hub-Signature-256`, or `X-Bitbucket-Signature` in `sha256=<hex>` format. Confirm the actual header emitted by your Bitbucket Server/Data Center version during rollout.
+
+Before enabling it:
+
+- Set `PR_MONITOR_WEBHOOK_SECRET` in the service process environment and restart the service.
+- Map each `PROJECT/repository` to an execution user on the Webhook page.
+- Ensure that user has a Bitbucket Token and a readable local Git repository mapping.
+- Run PR Monitor on a stable port behind HTTPS and a trusted reverse proxy. `localhost` is not remotely reachable.
+
+An Nginx location example is available at `docs/nginx-webhook.conf.example`. The reverse proxy must preserve the request body and signature header unchanged.
+
+## Repository Review Standards
+
+Platform administrators can manage review standards at:
+
+```text
+http://localhost:4177/review-standards.html
+```
+
+Each standard can define its minimum published severity, general review requirements, and additional requirements for matching file paths. Bind a standard to an exact `PROJECT/repository` key; repositories without an explicit binding use the configured default standard.
+
+Every review job stores an immutable snapshot containing the standard name, version, rules, and SHA-256 hash. Editing a standard does not change queued or historical jobs. To review the same commit with an updated standard, open the task list and choose **按最新标准重评**; this creates a separate queued task and preserves the previous result.
+
+The platform continues to use the single bundled `bitbucket-pr-review` skill for authentication, diff inspection, inline comments, and result handling. Repository standards are injected as task-specific prompt constraints rather than copied into separate skills. Tokens and webhook secrets are not stored in review standards.
 
 ## Bundled Skill
 
@@ -108,4 +150,5 @@ The Windows installer is most reliable when built on Windows or a Windows CI run
 
 - Do not commit `data/`, `.env`, `.local/`, database files, logs, or build artifacts.
 - Bitbucket access tokens are stored only in runtime user data or the copied skill directory.
+- The webhook Secret is read only from the configured environment variable; it is not saved in platform storage or returned by APIs.
 - The repository contains example Bitbucket URLs only. Configure the real Bitbucket base URL during initialization.

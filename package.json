@@ -8,6 +8,7 @@
   "main": "electron/main.mjs",
   "scripts": {
     "start": "node server.mjs",
+    "test": "node --test",
     "desktop": "electron .",
     "desktop:dir": "electron-builder --dir",
     "desktop:dir:win": "electron-builder --win --x64 --dir",
@@ -28,6 +29,7 @@
       "electron/**/*",
       "public/**/*",
       "assets/**/*",
+      "server/**/*",
       "server.mjs",
       "package.json"
     ],

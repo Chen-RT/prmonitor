@@ -177,6 +177,10 @@ function renderSettings() {
   const canManageUsers = Boolean(state.permissions?.canManageUsers);
   $('#settingsNavLink').hidden = !canManagePlatform;
   $('#settingsWideLink').hidden = !canManagePlatform;
+  $('#webhookNavLink').hidden = !canManagePlatform;
+  $('#webhookWideLink').hidden = !canManagePlatform;
+  $('#reviewStandardsNavLink').hidden = !canManagePlatform;
+  $('#reviewStandardsWideLink').hidden = !canManagePlatform;
   $('#usersNavLink').hidden = !canManageUsers;
   $('#userManageMenuLink').hidden = !canManageUsers;
   $('#schedulerBox').innerHTML = `
@@ -233,6 +237,7 @@ function prRows(prs) {
               ${pr.platformReviewCurrent && !pr.selfCommentCount ? '<div class="summary good">平台 AI 已评审当前提交</div>' : ''}
               ${prReviewHint(pr)}
               ${['failed', 'blocked'].includes(pr.latestReviewJob?.status) ? '<div class="summary error">上次平台 review 任务未完成</div>' : ''}
+              ${pr.latestReviewJob?.reviewStandardSnapshot ? `<div class="summary">标准：${escapeHtml(pr.latestReviewJob.reviewStandardSnapshot.name)} v${escapeHtml(pr.latestReviewJob.reviewStandardSnapshot.version)}</div>` : ''}
               ${pr.selfCommentCount ? `<div class="summary">评论 ${escapeHtml(pr.selfCommentCount)} 条，最近 ${formatTime(pr.latestSelfCommentAt)}</div>` : ''}
               ${pr.latestCodeChangeAt ? `<div class="summary">最近代码变更 ${formatTime(pr.latestCodeChangeAt)}</div>` : ''}
               ${pr.reviewSignalError ? `<div class="summary error">${escapeHtml(pr.reviewSignalError)}</div>` : ''}
@@ -277,6 +282,7 @@ function jobRows(jobs) {
       <tbody>
         ${jobs.map((job) => {
           const canRun = ['queued', 'failed', 'blocked'].includes(job.status);
+          const canReviewWithLatestStandard = ['done', 'failed', 'blocked'].includes(job.status);
           const runLabel = job.status === 'running' ? '执行中' : job.status === 'done' ? '已完成' : job.status === 'queued' ? '执行' : '重试';
           const pr = (state.prs || []).find((item) => item.key === job.prKey);
           return `
@@ -284,6 +290,7 @@ function jobRows(jobs) {
             <td>
               <div class="mono">${escapeHtml(job.prDisplayKey || `${job.project}/${job.repo}#${job.prKey.split('#')[1]}`)}</div>
               <div class="summary">任务 ID：${escapeHtml(job.id.slice(0, 8))}</div>
+              ${job.reviewStandardSnapshot ? `<div class="summary standard-snapshot">标准：<strong>${escapeHtml(job.reviewStandardSnapshot.name)}</strong> v${escapeHtml(job.reviewStandardSnapshot.version)} · ${job.reviewStandardSnapshot.source === 'repository' ? '仓库绑定' : '默认'}</div>` : `<div class="summary error">${job.status === 'done' ? '历史任务未记录标准快照' : '标准快照缺失，执行时将按当前配置补齐'}</div>`}
               ${state.permissions?.canViewAllUsers ? `<div class="summary">归属：${escapeHtml(job.ownerDisplayName || job.ownerUserId)}</div>` : ''}
               <div class="title">${escapeHtml(job.title)}</div>
             </td>
@@ -301,6 +308,7 @@ function jobRows(jobs) {
                 <button data-run-job="${escapeHtml(job.id)}" ${canRun ? '' : 'disabled'}>${runLabel}</button>
                 <button data-open="${escapeHtml(job.prUrl)}">打开 PR</button>
                 <button data-open="/logs.html">查看事件日志</button>
+                ${canReviewWithLatestStandard ? `<button data-review-latest-standard="${escapeHtml(job.id)}">按最新标准重评</button>` : ''}
                 ${pr && !pr.localRepoPath ? `<button data-config-repo="${escapeHtml(pr.key)}">配置路径</button>` : ''}
                 <button class="danger-button" data-delete-job="${escapeHtml(job.id)}">${job.status === 'running' ? '取消并删除' : '删除'}</button>
               </div>
@@ -455,6 +463,18 @@ document.addEventListener('click', async (event) => {
     runJob.disabled = true;
     runJob.textContent = '启动中';
     await mutate(`/api/jobs/${runJob.dataset.runJob}/run`);
+    return;
+  }
+
+  const reviewLatestStandard = event.target.closest('[data-review-latest-standard]');
+  if (reviewLatestStandard) {
+    if (!window.confirm('将为同一 PR 和当前提交创建一个使用最新评审标准的新任务，确认继续吗？')) return;
+    reviewLatestStandard.disabled = true;
+    reviewLatestStandard.textContent = '创建中';
+    await mutate(`/api/jobs/${reviewLatestStandard.dataset.reviewLatestStandard}/review-with-latest-standard`);
+    activeTab = 'jobs';
+    document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item.dataset.tab === activeTab));
+    renderContent();
     return;
   }
 

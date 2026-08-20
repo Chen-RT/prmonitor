@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bitbucket Webhook · PR 监控平台</title>
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell settings-shell webhook-shell">
+      <header class="topbar">
+        <a class="brand-block brand-link" href="/">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40">
+              <path d="M8 13c0-5 4-9 9-9h6c5 0 9 4 9 9v14c0 5-4 9-9 9h-6c-5 0-9-4-9-9V13Z" />
+              <path d="M15 15h10M15 21h7" />
+            </svg>
+          </span>
+          <div>
+            <h1>Bitbucket Webhook</h1>
+            <p>PR 创建或源分支更新后，立即同步并触发评审</p>
+          </div>
+        </a>
+        <div class="actions">
+          <a class="button-link" href="/">返回监控台</a>
+          <a class="button-link" href="/review-standards.html">评审标准</a>
+          <a class="button-link" href="/settings.html">平台设置</a>
+          <a class="button-link" href="/logs.html">日志</a>
+        </div>
+      </header>
+
+      <section class="webhook-layout">
+        <form id="webhookSettingsForm" class="panel settings-card webhook-config-card">
+          <div class="section-title">
+            <h2>入口配置</h2>
+            <p>Secret 只从服务进程的环境变量读取，页面和存储中不会保存原值。</p>
+          </div>
+
+          <label class="check">
+            <input id="webhookEnabled" type="checkbox" />
+            <span>启用 Bitbucket Webhook 入口</span>
+          </label>
+
+          <label>
+            <span>外部访问地址</span>
+            <input id="webhookPublicBaseUrl" placeholder="https://pr-monitor.example.com" />
+          </label>
+          <label>
+            <span>Bitbucket Webhook URL</span>
+            <input id="webhookEndpointUrl" class="mono" readonly />
+          </label>
+
+          <div id="webhookNetworkNotice" class="helper-box">
+            <strong>远程访问提示</strong>
+            <span><code>127.0.0.1</code> 和 <code>localhost</code> 无法被远程 Bitbucket 访问。外部地址只用于生成 URL，不会自动开放端口或配置反向代理。</span>
+          </div>
+
+          <label>
+            <span>Secret 环境变量名</span>
+            <input id="webhookSecretEnvName" class="mono" placeholder="PR_MONITOR_WEBHOOK_SECRET" />
+          </label>
+          <div id="webhookSecretStatus" class="auth-status-card" aria-live="polite"></div>
+
+          <fieldset class="driver-fieldset webhook-events">
+            <legend>接收事件</legend>
+            <label class="check">
+              <input id="webhookEventOpened" type="checkbox" value="pr:opened" />
+              <span><code>pr:opened</code> · PR 创建</span>
+            </label>
+            <label class="check">
+              <input id="webhookEventUpdated" type="checkbox" value="pr:from_ref_updated" />
+              <span><code>pr:from_ref_updated</code> · 源分支更新</span>
+            </label>
+          </fieldset>
+
+          <label>
+            <span>目标分支规则</span>
+            <textarea id="webhookTargetBranches" rows="3" placeholder="main&#10;release/*"></textarea>
+          </label>
+
+          <div class="webhook-field-row">
+            <label>
+              <span>命中动作</span>
+              <select id="webhookAction">
+                <option value="run">立即执行评审</option>
+                <option value="queue">只创建排队任务</option>
+                <option value="sync">仅同步 PR</option>
+              </select>
+            </label>
+            <label>
+              <span>请求上限（字节）</span>
+              <input id="webhookMaxBodyBytes" type="number" min="1024" max="10485760" step="1024" />
+            </label>
+          </div>
+
+          <label>
+            <span>仓库 → 执行用户</span>
+            <textarea id="webhookRepoOwners" class="mono" rows="5" placeholder="I18N/plugin-bi-finebi-cli=admin"></textarea>
+          </label>
+          <div id="webhookOwnerHelp" class="helper-box"></div>
+
+          <details class="webhook-test-panel" open>
+            <summary>无副作用配置检测</summary>
+            <div class="webhook-field-row">
+              <label>
+                <span>示例 Project</span>
+                <input id="webhookTestProject" placeholder="I18N" />
+              </label>
+              <label>
+                <span>示例仓库 slug</span>
+                <input id="webhookTestRepo" placeholder="plugin-bi-finebi-cli" />
+              </label>
+            </div>
+            <div class="webhook-field-row">
+              <label>
+                <span>示例目标分支</span>
+                <input id="webhookTestBranch" value="main" />
+              </label>
+              <label>
+                <span>示例 commit</span>
+                <input id="webhookTestCommit" class="mono" value="configuration-test-commit" />
+              </label>
+            </div>
+            <div id="webhookTestResults" class="environment-list"></div>
+          </details>
+
+          <div class="form-actions">
+            <button class="primary" type="submit">保存 Webhook 设置</button>
+            <button id="webhookTestBtn" type="button">检测当前配置</button>
+            <span id="webhookSaveStatus" class="save-status" aria-live="polite"></span>
+          </div>
+        </form>
+
+        <section class="panel settings-card webhook-delivery-card">
+          <div class="section-title">
+            <h2>最近投递</h2>
+            <p>展示验签、过滤、路由、去重和任务创建结果；不会展示请求体、Token 或 Secret。</p>
+          </div>
+          <div class="webhook-flow">
+            <span>验签</span><b>→</b><span>事件过滤</span><b>→</b><span>执行用户</span><b>→</b><span>PR/commit 去重</span><b>→</b><span>评审任务</span>
+          </div>
+          <div id="webhookDeliveriesTable"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/webhooks.js" type="module"></script>
+  </body>
+</html>

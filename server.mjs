@@ -6,6 +6,28 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { gzip, gunzip } from 'node:zlib';
+import {
+  normalizeWebhookSettings,
+  validateWebhookSettingsInput,
+  webhookSettingsForClient
+} from './server/webhook-config.mjs';
+import { branchMatches, parseBitbucketWebhookEvent } from './server/webhook-event.mjs';
+import {
+  WebhookHttpError,
+  parseJsonBuffer,
+  readRawBody,
+  verifyBitbucketWebhookSignature
+} from './server/webhook-signature.mjs';
+import {
+  BUILTIN_REVIEW_STANDARD_ID,
+  canonicalRepoKeyFromValue,
+  normalizeReviewStandards,
+  resolveReviewStandard,
+  reviewStandardPromptSection,
+  snapshotReviewStandard,
+  validateRepoBindingsInput,
+  validateReviewStandardInput
+} from './server/review-standard.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4177);
@@ -29,7 +51,9 @@ const execFileAsync = promisify(execFile);
 
 let schedulerTimer = null;
 const runningReviewProcesses = new Map();
+const webhookDeliveriesInFlight = new Set();
 let startupReconcileDone = false;
+let storeMutationTail = Promise.resolve();
 
 function expandedPath() {
   return [
@@ -91,6 +115,20 @@ async function resolveCodexExecutable(configuredPath = '') {
   throw new Error('找不到 codex 可执行文件。请确认已安装 Codex CLI，或手动填写 codex 所在目录/可执行文件路径。Windows 常见目录是 npm 全局 bin 目录，例如 C:\\Users\\<name>\\AppData\\Roaming\\npm。');
 }
 
+async function resolveCodexLaunch(configuredPath = '') {
+  const executable = await resolveCodexExecutable(configuredPath);
+  if (process.platform !== 'win32' || !/\.(cmd|bat)$/i.test(executable)) {
+    return { command: executable, prefixArgs: [] };
+  }
+  const binDir = path.dirname(executable);
+  const codexScript = path.join(binDir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  const nodeExecutable = path.join(binDir, 'node.exe');
+  if (await executableExists(codexScript) && await executableExists(nodeExecutable)) {
+    return { command: nodeExecutable, prefixArgs: [codexScript] };
+  }
+  throw new Error(`无法安全启动 ${executable}。请将 Codex 路径指向包含 node.exe 和 node_modules\\@openai\\codex 的 npm 全局 bin 目录。`);
+}
+
 const defaultStore = () => ({
   initialized: false,
   settings: {
@@ -100,7 +138,9 @@ const defaultStore = () => ({
     autoReviewEnabled: false,
     dangerousBypass: false,
     codexExecutablePath: '',
-    defaultRepoPath: ''
+    defaultRepoPath: '',
+    reviewStandards: normalizeReviewStandards(),
+    webhook: normalizeWebhookSettings()
   },
   currentUserId: '',
   users: {},
@@ -193,6 +233,8 @@ async function saveStorageConfig(config) {
 function normalizeStore(store) {
   const base = defaultStore();
   const settings = { ...base.settings, ...(store?.settings || {}) };
+  settings.webhook = normalizeWebhookSettings(store?.settings?.webhook);
+  settings.reviewStandards = normalizeReviewStandards(store?.settings?.reviewStandards);
   const users = { ...(store?.users || {}) };
   if (store?.settings?.selfReviewerNames && users.oliver) {
     users.oliver = {
@@ -1044,6 +1086,23 @@ async function saveStore(store, explicitConfig = null) {
   await writeStoreToConfig(store, config);
 }
 
+async function withStoreMutation(mutation) {
+  const previous = storeMutationTail;
+  let release;
+  storeMutationTail = new Promise((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    const store = await ensureStore();
+    const result = await mutation(store);
+    await saveStore(store);
+    return result;
+  } finally {
+    release();
+  }
+}
+
 function storageForClient(config) {
   const databaseLabel = config.driver === 'mysql'
     ? `MySQL：${maskDatabaseUrl(config.databaseUrl)}`
@@ -1555,7 +1614,8 @@ async function checkRuntimeEnvironment(store = defaultStore(), overrides = {}) {
   const checks = [];
   const configuredCodexPath = String(overrides.codexExecutablePath ?? store.settings?.codexExecutablePath ?? '').trim();
   try {
-    const codexPath = await resolveCodexExecutable(configuredCodexPath);
+    const launch = await resolveCodexLaunch(configuredCodexPath);
+    const codexPath = [launch.command, ...launch.prefixArgs].join(' ');
     checks.push({
       id: 'codex',
       label: 'Codex CLI',
@@ -1591,20 +1651,32 @@ async function checkRuntimeEnvironment(store = defaultStore(), overrides = {}) {
     });
   }
 
+  const mappedPaths = [...new Set(parseRepoPathMappings(overrides.repoPathMappings).values())];
   const roots = [];
-  for (const root of repoPathCandidateRoots()) {
+  for (const root of mappedPaths.length ? mappedPaths : repoPathCandidateRoots()) {
+    const exists = await pathExists(root);
     roots.push({
       path: root,
-      exists: await pathExists(root)
+      exists,
+      isGitRepo: exists && mappedPaths.length ? await pathExists(path.join(root, '.git')) : undefined
     });
   }
+  const validMappedPaths = roots.filter((root) => root.exists && root.isGitRepo);
+  const validDefaultRoots = roots.filter((root) => root.exists);
+  const repoPathsOk = mappedPaths.length
+    ? validMappedPaths.length === mappedPaths.length
+    : validDefaultRoots.length > 0;
   checks.push({
     id: 'repo-roots',
     label: '仓库搜索目录',
-    ok: roots.some((root) => root.exists),
-    message: roots.some((root) => root.exists)
-      ? `已检测到 ${roots.filter((root) => root.exists).length} 个可读搜索目录。`
-      : '未检测到默认仓库搜索目录，可在初始化时填写仓库路径映射。',
+    ok: repoPathsOk,
+    message: mappedPaths.length
+      ? repoPathsOk
+        ? `已验证 ${validMappedPaths.length} 个本地 Git 仓库映射。`
+        : `有 ${mappedPaths.length - validMappedPaths.length} 个仓库映射路径不存在或不是 Git 仓库。`
+      : validDefaultRoots.length
+        ? `已检测到 ${validDefaultRoots.length} 个可读搜索目录。`
+        : '未检测到默认仓库搜索目录，可在初始化时填写仓库路径映射。',
     roots
   });
 
@@ -1739,14 +1811,39 @@ async function syncPrs({ triggerReview = false, reason = 'manual' } = {}) {
   return store;
 }
 
-function createReviewJob(store, pr, reason = 'manual') {
+function reviewStandardForJob(store, pr) {
+  const resolution = resolveReviewStandard(store.settings.reviewStandards, pr.project, pr.repo);
+  return {
+    resolution,
+    snapshot: resolution.ok ? snapshotReviewStandard(resolution.standard, resolution.source) : null
+  };
+}
+
+function blockJobForReviewStandard(store, job, resolution) {
+  job.status = 'blocked';
+  job.finishedAt = new Date().toISOString();
+  job.reviewResult = 'blocked';
+  job.reviewStandardError = resolution.reason || '无法解析仓库评审标准。';
+  job.log = `评审标准配置不可用：${job.reviewStandardError}`;
+  addEvent(store, 'review-standard-blocked', `评审任务缺少可用标准：${job.prDisplayKey || job.prKey}`, {
+    jobId: job.id,
+    prKey: job.prKey,
+    userId: job.ownerUserId,
+    reason: job.reviewStandardError
+  });
+  return job;
+}
+
+function createReviewJob(store, pr, reason = 'manual', { forceLatestStandard = false } = {}) {
   const existing = store.jobs.find((job) => (
     job.prKey === pr.key &&
     job.ownerUserId === pr.ownerUserId &&
-    (['queued', 'running'].includes(job.status) || (job.status === 'done' && job.reviewedCommit === pr.fromCommit))
+    ((['queued', 'running'].includes(job.status) && job.targetCommit === (pr.fromCommit || '')) ||
+      (!forceLatestStandard && job.status === 'done' && job.reviewedCommit === pr.fromCommit))
   ));
   if (existing) return existing;
 
+  const { resolution, snapshot } = reviewStandardForJob(store, pr);
   const job = {
     id: crypto.randomUUID(),
     ownerUserId: pr.ownerUserId,
@@ -1757,7 +1854,7 @@ function createReviewJob(store, pr, reason = 'manual') {
     project: pr.project,
     repo: pr.repo,
     title: pr.title,
-    status: 'queued',
+    status: resolution.ok ? 'queued' : 'blocked',
     reason,
     createdAt: new Date().toISOString(),
     startedAt: null,
@@ -1765,14 +1862,509 @@ function createReviewJob(store, pr, reason = 'manual') {
     exitCode: null,
     targetCommit: pr.fromCommit || '',
     reviewedCommit: '',
-    reviewResult: '',
-    log: '',
+    reviewResult: resolution.ok ? '' : 'blocked',
+    reviewStandardSnapshot: snapshot,
+    reviewStandardError: resolution.ok ? '' : resolution.reason,
+    log: resolution.ok ? '' : `评审标准配置不可用：${resolution.reason}`,
     commandPreview: ''
   };
   store.jobs.unshift(job);
   store.jobs = store.jobs.slice(0, 100);
-  addEvent(store, 'review-job', `已创建评审任务：${pr.displayKey}`, { jobId: job.id, reason, userId: pr.ownerUserId });
+  addEvent(store, resolution.ok ? 'review-job' : 'review-standard-blocked', resolution.ok
+    ? `已创建评审任务：${pr.displayKey}`
+    : `评审任务缺少可用标准：${pr.displayKey}`, {
+    jobId: job.id,
+    reason,
+    userId: pr.ownerUserId,
+    reviewStandardId: snapshot?.id || resolution.standardId || '',
+    reviewStandardVersion: snapshot?.version || 0,
+    reviewStandardError: resolution.ok ? '' : resolution.reason
+  });
   return job;
+}
+
+function webhookHeader(request, names) {
+  for (const name of names) {
+    const value = request.headers[String(name).toLowerCase()];
+    if (Array.isArray(value) ? value.length : value) return Array.isArray(value) ? value[0] : value;
+  }
+  return '';
+}
+
+function webhookDeliveryInfo(request) {
+  const headerValue = webhookHeader(request, [
+    'x-request-id',
+    'x-atlassian-webhook-identifier',
+    'x-request-uuid',
+    'x-hook-uuid'
+  ]);
+  return {
+    deliveryId: String(headerValue || crypto.randomUUID()).trim(),
+    persistent: Boolean(headerValue)
+  };
+}
+
+function webhookSignatureHeader(request) {
+  return webhookHeader(request, ['x-hub-signature', 'x-hub-signature-256', 'x-bitbucket-signature']);
+}
+
+function webhookLogDetail(context, additions = {}) {
+  return {
+    deliveryId: context.deliveryId || '',
+    eventKey: context.eventKey || '',
+    project: context.project || '',
+    repo: context.repo || '',
+    prId: context.prId ?? '',
+    fromCommit: context.fromCommit || '',
+    outcome: additions.outcome || '',
+    reason: additions.reason || '',
+    userId: additions.userId || '',
+    jobId: additions.jobId || '',
+    durationMs: Date.now() - context.startedAt,
+    bodyBytes: context.bodyBytes || 0
+  };
+}
+
+function addWebhookLog(store, type, message, context, additions = {}, level = 'info') {
+  addLog(store, type, message, webhookLogDetail(context, additions), level);
+}
+
+async function persistWebhookLog(type, message, context, additions = {}, level = 'info') {
+  await withStoreMutation((store) => {
+    addWebhookLog(store, type, message, context, additions, level);
+  });
+}
+
+function webhookDeliverySeen(store, deliveryId) {
+  if (!deliveryId) return false;
+  return (store.logs || []).some((log) => (
+    String(log.type || '').startsWith('webhook-') && log.detail?.deliveryId === deliveryId
+  ));
+}
+
+function webhookUserNames(user) {
+  return new Set([
+    user?.username,
+    user?.displayName,
+    ...String(user?.bitbucketNames || '').split(/[\n,]+/)
+  ].map((name) => String(name || '').trim().toLowerCase()).filter(Boolean));
+}
+
+function resolveWebhookOwner(store, event, settings) {
+  const requestedRepo = repoKey(event.project, event.repo).toLowerCase();
+  const explicitEntry = Object.entries(settings.repoOwners || {})
+    .find(([configuredRepo]) => configuredRepo.toLowerCase() === requestedRepo);
+  if (explicitEntry) {
+    const owner = store.users[explicitEntry[1]];
+    return owner
+      ? { owner, source: 'explicit' }
+      : { owner: null, reason: 'configured-owner-not-found' };
+  }
+
+  const mappedCandidates = Object.values(store.users || {}).filter((user) => {
+    const mappings = parseRepoPathMappings(user.repoPathMappings);
+    return [...mappings.keys()].some((key) => key.toLowerCase() === requestedRepo);
+  });
+  if (mappedCandidates.length === 1) return { owner: mappedCandidates[0], source: 'repo-path' };
+  if (mappedCandidates.length > 1) return { owner: null, reason: 'owner-ambiguous' };
+
+  const reviewerNames = new Set((event.reviewers || []).map((name) => String(name).trim().toLowerCase()).filter(Boolean));
+  const reviewerCandidates = Object.values(store.users || []).filter((user) => (
+    [...webhookUserNames(user)].some((name) => reviewerNames.has(name))
+  ));
+  if (reviewerCandidates.length === 1) return { owner: reviewerCandidates[0], source: 'reviewer' };
+  return { owner: null, reason: reviewerCandidates.length > 1 ? 'owner-ambiguous' : 'owner-unresolved' };
+}
+
+function webhookCommitOutcome(store, pr) {
+  const jobs = (store.jobs || []).filter((job) => (
+    job.prKey === pr.key &&
+    job.ownerUserId === pr.ownerUserId &&
+    (job.targetCommit === pr.fromCommit || job.reviewedCommit === pr.fromCommit)
+  ));
+  const active = jobs.find((job) => ['queued', 'running'].includes(job.status));
+  if (active) return { outcome: 'duplicate-commit', reason: active.status, job: active };
+  const done = jobs.find((job) => job.status === 'done' && job.reviewedCommit === pr.fromCommit);
+  if (done) return { outcome: 'already-reviewed', reason: 'done', job: done };
+  const previousFailure = jobs.find((job) => ['failed', 'blocked'].includes(job.status));
+  if (previousFailure) return { outcome: 'previous-failure', reason: previousFailure.status, job: previousFailure };
+  return null;
+}
+
+async function processBitbucketWebhook(request) {
+  const startedAt = Date.now();
+  const eventKey = String(webhookHeader(request, ['x-event-key']) || '').trim();
+  const delivery = webhookDeliveryInfo(request);
+  const context = {
+    startedAt,
+    eventKey,
+    deliveryId: delivery.deliveryId,
+    bodyBytes: 0
+  };
+  const initialStore = await ensureStore();
+  const settings = normalizeWebhookSettings(initialStore.settings.webhook);
+  if (!settings.enabled) {
+    await persistWebhookLog('webhook-ignored', 'Webhook 投递已忽略：平台入口未启用', context, {
+      outcome: 'ignored',
+      reason: 'disabled'
+    });
+    return { status: 200, body: { ok: true, outcome: 'ignored', reason: 'disabled', deliveryId: delivery.deliveryId } };
+  }
+
+  const secret = process.env[settings.secretEnvName];
+  if (!secret) {
+    await persistWebhookLog('webhook-rejected', 'Webhook 投递已拒绝：Secret 环境变量未配置', context, {
+      outcome: 'rejected',
+      reason: 'secret-not-configured'
+    }, 'error');
+    throw new WebhookHttpError(503, 'Webhook Secret 尚未配置。');
+  }
+
+  const contentType = String(request.headers['content-type'] || '').toLowerCase();
+  if (!contentType.includes('application/json')) {
+    await persistWebhookLog('webhook-rejected', 'Webhook 投递已拒绝：Content-Type 无效', context, {
+      outcome: 'rejected',
+      reason: 'unsupported-content-type'
+    }, 'warn');
+    throw new WebhookHttpError(415, 'Webhook 请求必须使用 application/json。');
+  }
+
+  let rawBody;
+  try {
+    rawBody = await readRawBody(request, settings.maxBodyBytes);
+  } catch (error) {
+    await persistWebhookLog('webhook-rejected', 'Webhook 投递已拒绝：请求体超过上限', context, {
+      outcome: 'rejected',
+      reason: 'payload-too-large'
+    }, 'warn');
+    throw error;
+  }
+  context.bodyBytes = rawBody.length;
+  if (!verifyBitbucketWebhookSignature(rawBody, webhookSignatureHeader(request), secret)) {
+    await persistWebhookLog('webhook-rejected', 'Webhook 投递已拒绝：签名无效', context, {
+      outcome: 'rejected',
+      reason: 'invalid-signature'
+    }, 'warn');
+    throw new WebhookHttpError(401, 'Webhook 签名缺失或不匹配。');
+  }
+
+  let event;
+  try {
+    const payload = parseJsonBuffer(rawBody);
+    event = parseBitbucketWebhookEvent(payload, { eventKey, deliveryId: delivery.deliveryId });
+  } catch (error) {
+    await persistWebhookLog('webhook-rejected', 'Webhook 投递已拒绝：载荷无效', context, {
+      outcome: 'rejected',
+      reason: 'invalid-payload'
+    }, 'warn');
+    throw error;
+  }
+  Object.assign(context, event);
+  if (!settings.acceptedEvents.includes(event.eventKey)) {
+    await persistWebhookLog('webhook-ignored', `Webhook 事件已忽略：${event.eventKey || 'unknown'}`, context, {
+      outcome: 'ignored',
+      reason: 'event-not-accepted'
+    });
+    return { status: 200, body: { ok: true, outcome: 'ignored', reason: 'event-not-accepted', deliveryId: delivery.deliveryId } };
+  }
+  if (!branchMatches(event.toBranch, settings.targetBranches)) {
+    await persistWebhookLog('webhook-ignored', `Webhook PR 已忽略：目标分支 ${event.toBranch || 'unknown'} 不匹配`, context, {
+      outcome: 'ignored',
+      reason: 'branch-not-matched'
+    });
+    return { status: 200, body: { ok: true, outcome: 'ignored', reason: 'branch-not-matched', deliveryId: delivery.deliveryId } };
+  }
+
+  if (delivery.persistent && (webhookDeliveriesInFlight.has(delivery.deliveryId) || webhookDeliverySeen(initialStore, delivery.deliveryId))) {
+    await persistWebhookLog('webhook-duplicate', `Webhook 重复投递：${delivery.deliveryId}`, context, {
+      outcome: 'duplicate-delivery',
+      reason: 'delivery-id'
+    });
+    return { status: 200, body: { ok: true, outcome: 'duplicate-delivery', deliveryId: delivery.deliveryId } };
+  }
+
+  if (delivery.persistent) webhookDeliveriesInFlight.add(delivery.deliveryId);
+  try {
+    const ownerResolution = resolveWebhookOwner(initialStore, event, settings);
+    const owner = ownerResolution.owner;
+    if (!owner) {
+      await persistWebhookLog('webhook-ignored', `Webhook PR 未找到唯一执行用户：${event.project}/${event.repo}`, context, {
+        outcome: 'ignored',
+        reason: ownerResolution.reason
+      }, 'warn');
+      return {
+        status: 404,
+        body: { ok: true, outcome: 'ignored', reason: 'owner-unresolved', deliveryId: delivery.deliveryId }
+      };
+    }
+    if (!tokenFromUser(owner)) {
+      await persistWebhookLog('webhook-ignored', `Webhook 执行用户未配置 Bitbucket Token：${event.project}/${event.repo}`, context, {
+        outcome: 'ignored',
+        reason: 'owner-token-missing',
+        userId: owner.id
+      }, 'warn');
+      return { status: 200, body: { ok: true, outcome: 'ignored', reason: 'owner-not-ready', deliveryId: delivery.deliveryId } };
+    }
+
+    const localRepoPath = await resolveRepoPathForPr(owner, event.project, event.repo);
+    if (!(await pathExists(localRepoPath)) || !(await pathExists(path.join(localRepoPath, '.git')))) {
+      await persistWebhookLog('webhook-ignored', `Webhook 执行用户缺少可用的本地 Git 仓库：${event.project}/${event.repo}`, context, {
+        outcome: 'ignored',
+        reason: 'local-repo-missing',
+        userId: owner.id
+      }, 'warn');
+      return { status: 200, body: { ok: true, outcome: 'ignored', reason: 'owner-not-ready', deliveryId: delivery.deliveryId } };
+    }
+
+    const latestRawPr = await bitbucketGet(
+      initialStore,
+      `/rest/api/1.0/projects/${encodeURIComponent(event.project)}/repos/${encodeURIComponent(event.repo)}/pull-requests/${encodeURIComponent(event.prId)}`,
+      {},
+      owner
+    );
+    const normalized = normalizePr(latestRawPr, 'webhook', 'UNAPPROVED', localRepoPath, {}, owner, initialStore);
+    context.fromCommit = normalized.fromCommit || event.fromCommit;
+
+    const result = await withStoreMutation((store) => {
+      const currentSettings = normalizeWebhookSettings(store.settings.webhook);
+      if (!currentSettings.enabled) {
+        addWebhookLog(store, 'webhook-ignored', 'Webhook 投递处理期间入口已关闭', context, {
+          outcome: 'ignored',
+          reason: 'disabled',
+          userId: owner.id
+        });
+        return { status: 200, body: { ok: true, outcome: 'ignored', reason: 'disabled', deliveryId: delivery.deliveryId } };
+      }
+      if (delivery.persistent && webhookDeliverySeen(store, delivery.deliveryId)) {
+        addWebhookLog(store, 'webhook-duplicate', `Webhook 重复投递：${delivery.deliveryId}`, context, {
+          outcome: 'duplicate-delivery',
+          reason: 'delivery-id',
+          userId: owner.id
+        });
+        return { status: 200, body: { ok: true, outcome: 'duplicate-delivery', deliveryId: delivery.deliveryId } };
+      }
+
+      const previous = store.prs[normalized.key];
+      const now = new Date().toISOString();
+      const pr = {
+        ...previous,
+        ...normalized,
+        statusBucket: 'awaiting',
+        firstSeenAt: previous?.firstSeenAt || now,
+        lastSeenAt: now
+      };
+      store.prs[pr.key] = pr;
+      const duplicate = webhookCommitOutcome(store, pr);
+      if (duplicate) {
+        addWebhookLog(store, 'webhook-duplicate', `Webhook PR commit 已处理：${pr.displayKey}`, context, {
+          outcome: duplicate.outcome,
+          reason: duplicate.reason,
+          userId: owner.id,
+          jobId: duplicate.job?.id || ''
+        });
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            outcome: duplicate.outcome,
+            deliveryId: delivery.deliveryId,
+            pr: pr.displayKey,
+            jobId: duplicate.job?.id || ''
+          }
+        };
+      }
+
+      let job = null;
+      if (currentSettings.action !== 'sync') {
+        job = createReviewJob(store, pr, `webhook-${event.eventKey}`);
+      }
+      addWebhookLog(store, 'webhook-accepted', `Webhook PR 已接收：${pr.displayKey}`, context, {
+        outcome: currentSettings.action === 'sync' ? 'synced' : 'accepted',
+        reason: ownerResolution.source,
+        userId: owner.id,
+        jobId: job?.id || ''
+      });
+      return {
+        status: job ? 202 : 200,
+        body: {
+          ok: true,
+          outcome: job ? 'accepted' : 'synced',
+          deliveryId: delivery.deliveryId,
+          pr: pr.displayKey,
+          jobId: job?.id || ''
+        },
+        runJobId: currentSettings.action === 'run' ? job?.id || '' : ''
+      };
+    });
+    return result;
+  } catch (error) {
+    await persistWebhookLog('webhook-failed', `Webhook 处理失败：${error.message}`, context, {
+      outcome: 'failed',
+      reason: 'processing-error'
+    }, 'error').catch(() => {});
+    throw error;
+  } finally {
+    if (delivery.persistent) webhookDeliveriesInFlight.delete(delivery.deliveryId);
+  }
+}
+
+function webhookSettingsPayload(store) {
+  return {
+    settings: webhookSettingsForClient(store.settings.webhook),
+    users: Object.values(store.users || {}).map((user) => ({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      role: user.role,
+      hasBitbucketToken: Boolean(tokenFromUser(user)),
+      repoPathMappings: user.repoPathMappings || ''
+    }))
+  };
+}
+
+async function testWebhookConfiguration(store, body = {}) {
+  const settings = body.settings
+    ? validateWebhookSettingsInput(body.settings)
+    : normalizeWebhookSettings(store.settings.webhook);
+  const sample = body.sample || {};
+  const event = {
+    deliveryId: String(sample.deliveryId || 'configuration-test').trim(),
+    eventKey: String(sample.eventKey || settings.acceptedEvents[0] || 'pr:opened').trim(),
+    project: String(sample.project || '').trim(),
+    repo: String(sample.repo || '').trim(),
+    prId: String(sample.prId || '1').trim(),
+    fromCommit: String(sample.fromCommit || 'configuration-test-commit').trim(),
+    fromBranch: String(sample.fromBranch || 'feature/configuration-test').trim(),
+    toBranch: String(sample.toBranch || 'main').trim(),
+    reviewers: Array.isArray(sample.reviewers)
+      ? sample.reviewers
+      : String(sample.reviewers || '').split(/[\n,]+/).map((name) => name.trim()).filter(Boolean)
+  };
+  if (!event.project || !event.repo) {
+    throw new Error('配置检测需要填写示例 Project 和仓库 slug。');
+  }
+
+  const eventAccepted = settings.acceptedEvents.includes(event.eventKey);
+  const branchAccepted = branchMatches(event.toBranch, settings.targetBranches);
+  const ownerResolution = resolveWebhookOwner(store, event, settings);
+  const owner = ownerResolution.owner;
+  const localRepoPath = owner ? await resolveRepoPathForPr(owner, event.project, event.repo) : '';
+  const localRepoReady = Boolean(
+    localRepoPath &&
+    await pathExists(localRepoPath) &&
+    await pathExists(path.join(localRepoPath, '.git'))
+  );
+  const testPr = owner ? {
+    key: recordKey(owner.id, prKey(event.project, event.repo, event.prId)),
+    ownerUserId: owner.id,
+    fromCommit: event.fromCommit
+  } : null;
+  const duplicate = testPr ? webhookCommitOutcome(store, testPr) : null;
+  const reviewStandardResolution = resolveReviewStandard(store.settings.reviewStandards, event.project, event.repo);
+  const checks = [
+    { id: 'enabled', ok: settings.enabled, message: settings.enabled ? 'Webhook 已启用。' : 'Webhook 尚未启用。' },
+    {
+      id: 'secret',
+      ok: Boolean(process.env[settings.secretEnvName]),
+      message: process.env[settings.secretEnvName]
+        ? `环境变量 ${settings.secretEnvName} 已配置。`
+        : `环境变量 ${settings.secretEnvName} 未配置。`
+    },
+    { id: 'event', ok: eventAccepted, message: eventAccepted ? `事件 ${event.eventKey} 已允许。` : `事件 ${event.eventKey} 会被忽略。` },
+    { id: 'branch', ok: branchAccepted, message: branchAccepted ? `目标分支 ${event.toBranch} 已命中。` : `目标分支 ${event.toBranch} 未命中规则。` },
+    {
+      id: 'owner',
+      ok: Boolean(owner),
+      message: owner ? `执行用户：${owner.displayName || owner.username}（${ownerResolution.source}）。` : `无法解析唯一执行用户：${ownerResolution.reason}。`
+    },
+    {
+      id: 'token',
+      ok: Boolean(owner && tokenFromUser(owner)),
+      message: owner && tokenFromUser(owner) ? '执行用户已配置 Bitbucket Token。' : '执行用户未配置 Bitbucket Token。'
+    },
+    {
+      id: 'repo',
+      ok: localRepoReady,
+      message: localRepoReady ? `本地 Git 仓库可用：${localRepoPath}` : `本地 Git 仓库不可用：${localRepoPath || '未映射'}。`
+    },
+    {
+      id: 'review-standard',
+      ok: reviewStandardResolution.ok,
+      message: reviewStandardResolution.ok
+        ? `评审标准：${reviewStandardResolution.standard.name} v${reviewStandardResolution.standard.version}（${reviewStandardResolution.source === 'repository' ? '仓库绑定' : '默认'}）。`
+        : `评审标准不可用：${reviewStandardResolution.reason}`
+    },
+    {
+      id: 'dedupe',
+      ok: !duplicate,
+      message: duplicate ? `该 commit 会被去重：${duplicate.outcome}。` : '该 commit 当前可以创建新任务。'
+    }
+  ];
+  return {
+    ok: checks.every((check) => check.ok),
+    sideEffects: false,
+    outcome: !eventAccepted
+      ? 'event-not-accepted'
+      : !branchAccepted
+        ? 'branch-not-matched'
+        : !owner
+          ? ownerResolution.reason
+          : !reviewStandardResolution.ok
+            ? 'review-standard-unresolved'
+            : duplicate?.outcome || 'ready',
+    checks
+  };
+}
+
+function knownRepositoriesForReviewStandards(store) {
+  const repositories = new Map();
+  const addRepository = (rawKey, detail = {}) => {
+    const key = canonicalRepoKeyFromValue(rawKey);
+    if (!key) return;
+    const [project, repo] = String(rawKey).trim().split('/');
+    const current = repositories.get(key) || { key, project, repo };
+    repositories.set(key, {
+      ...current,
+      ...Object.fromEntries(Object.entries(detail).filter(([, value]) => value !== undefined && value !== '')),
+      key,
+      project: current.project || project,
+      repo: current.repo || repo
+    });
+  };
+
+  for (const user of Object.values(store.users || {})) {
+    for (const [repoKeyValue, localRepoPath] of parseRepoPathMappings(user.repoPathMappings)) {
+      if (repoKeyValue === '*') continue;
+      addRepository(repoKeyValue, {
+        ownerUserId: user.id,
+        ownerDisplayName: user.displayName || user.username,
+        localRepoPath
+      });
+    }
+  }
+  for (const [repoKeyValue, ownerUserId] of Object.entries(store.settings.webhook?.repoOwners || {})) {
+    const owner = store.users[ownerUserId];
+    addRepository(repoKeyValue, {
+      ownerUserId,
+      ownerDisplayName: owner?.displayName || owner?.username || ownerUserId
+    });
+  }
+  for (const pr of Object.values(store.prs || {})) {
+    addRepository(`${pr.project}/${pr.repo}`, {
+      ownerUserId: pr.ownerUserId,
+      ownerDisplayName: pr.ownerDisplayName,
+      localRepoPath: pr.localRepoPath
+    });
+  }
+  return [...repositories.values()].sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function reviewStandardsPayload(store) {
+  return {
+    config: normalizeReviewStandards(store.settings.reviewStandards),
+    repositories: knownRepositoriesForReviewStandards(store),
+    builtinStandardId: BUILTIN_REVIEW_STANDARD_ID
+  };
 }
 
 async function pathExists(candidate) {
@@ -1785,7 +2377,7 @@ async function pathExists(candidate) {
   }
 }
 
-function buildReviewPrompt(pr, settings) {
+function buildReviewPrompt(pr, reviewStandardSnapshot) {
   return [
     `[$bitbucket-pr-review](${path.join(SKILL_DIR, 'SKILL.md')})`,
     'PR Monitor 自动化任务：这是非交互执行，不要向用户提问，也不要等待 stdin。',
@@ -1795,9 +2387,10 @@ function buildReviewPrompt(pr, settings) {
     '认证文件由平台维护，包含 accessToken/token 字段；请优先读取并使用 accessToken。',
     `PR: ${pr.url}`,
     `本地仓库目录: ${pr.localRepoPath || '未配置'}`,
+    reviewStandardPromptSection(reviewStandardSnapshot),
     '要求：只评论确认的问题；评论带 [P0]/[P1]/[P2]；不要发布猜测性或纯风格评论；最终输出评审摘要。',
     '最终输出最后一行必须是 REVIEW_RESULT: COMMENTS_POSTED、REVIEW_RESULT: NO_FINDINGS 或 REVIEW_RESULT: FAILED。'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 function logText(current, text) {
@@ -1929,21 +2522,44 @@ async function stopReviewProcess(job) {
   runningReviewProcesses.delete(job.id);
 }
 
-async function runReviewJob(jobId) {
+async function runReviewJob(jobId, { system = false } = {}) {
   const store = await ensureStore();
   const job = store.jobs.find((item) => item.id === jobId);
   if (!job) throw new Error('Review job not found.');
   if (job.status === 'running') return job;
   const actor = currentUser(store);
-  if (!isAdmin(actor) && job.ownerUserId !== actor.id) {
+  if (!system && !isAdmin(actor) && job.ownerUserId !== actor.id) {
     throw new Error('不能执行其他用户的 review 任务。');
   }
   const pr = store.prs[job.prKey];
   if (!pr) throw new Error('PR not found for review job.');
   pr.url = prWebUrl(store, pr);
   job.prUrl = pr.url;
+  if (job.targetCommit && pr.fromCommit && job.targetCommit !== pr.fromCommit) {
+    job.status = 'superseded';
+    job.finishedAt = new Date().toISOString();
+    job.reviewResult = 'superseded';
+    job.log = `任务目标 commit ${job.targetCommit} 已被新 commit ${pr.fromCommit} 替代，未执行旧任务。`;
+    addEvent(store, 'review-superseded', `评审任务已被新 commit 替代：${job.prDisplayKey || job.prKey}`, {
+      jobId: job.id,
+      prKey: job.prKey,
+      userId: job.ownerUserId
+    });
+    await saveStore(store);
+    return job;
+  }
   if (job.status === 'done' && job.reviewedCommit === pr.fromCommit) {
     return job;
+  }
+  if (!job.reviewStandardSnapshot) {
+    const { resolution, snapshot } = reviewStandardForJob(store, pr);
+    if (!resolution.ok) {
+      blockJobForReviewStandard(store, job, resolution);
+      await saveStore(store);
+      return job;
+    }
+    job.reviewStandardSnapshot = snapshot;
+    job.reviewStandardError = '';
   }
   if (!store.settings.dangerousBypass) {
     job.status = 'blocked';
@@ -1990,7 +2606,7 @@ async function runReviewJob(jobId) {
     return job;
   }
 
-  const prompt = buildReviewPrompt({ ...pr, localRepoPath: repoPath }, store.settings);
+  const prompt = buildReviewPrompt({ ...pr, localRepoPath: repoPath }, job.reviewStandardSnapshot);
   const outputPath = outputPathForJob(job.id);
   await mkdir(path.dirname(outputPath), { recursive: true });
   const args = [
@@ -2007,19 +2623,21 @@ async function runReviewJob(jobId) {
   if (store.settings.dangerousBypass) {
     args.push('--dangerously-bypass-approvals-and-sandbox');
   }
-  args.push(prompt);
+  args.push('-');
 
   job.status = 'running';
   job.startedAt = new Date().toISOString();
   job.finishedAt = null;
   job.exitCode = null;
-  job.targetCommit = pr.fromCommit || '';
+  job.targetCommit = job.targetCommit || pr.fromCommit || '';
   job.reviewedCommit = '';
   job.reviewResult = '';
   job.beforeSelfCommentCount = pr.selfCommentCount || 0;
   let codexCommand = '';
   try {
-    codexCommand = await resolveCodexExecutable(store.settings.codexExecutablePath);
+    const launch = await resolveCodexLaunch(store.settings.codexExecutablePath);
+    codexCommand = launch.command;
+    args.unshift(...launch.prefixArgs);
   } catch (error) {
     job.status = 'failed';
     job.finishedAt = new Date().toISOString();
@@ -2098,9 +2716,9 @@ async function runReviewJob(jobId) {
   try {
     child = spawn(codexCommand, args, {
       cwd: repoPath,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PATH: expandedPath() },
-      shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(codexCommand)
+      shell: false
     });
   } catch (error) {
     await handleChildError(error);
@@ -2109,6 +2727,12 @@ async function runReviewJob(jobId) {
   child.on('error', (error) => {
     handleChildError(error).catch(() => {});
   });
+  child.stdin?.on('error', (error) => {
+    if (error.code !== 'EPIPE') {
+      handleChildError(error).catch(() => {});
+    }
+  });
+  child.stdin?.end(prompt);
   runningReviewProcesses.set(job.id, child);
   child.stdout?.on('data', (chunk) => {
     stdoutRemainder += chunk.toString();
@@ -2179,12 +2803,14 @@ async function runReviewJob(jobId) {
       latestJob.finishedAt = new Date().toISOString();
       latestJob.reviewResult = reviewSucceeded ? (commentsAdded ? 'comments-posted' : 'no-findings') : 'failed';
       if (reviewSucceeded && latestPr) {
-        latestJob.reviewedCommit = latestPr.fromCommit || latestJob.targetCommit || '';
-        latestPr.platformReviewedAt = latestJob.finishedAt;
-        latestPr.platformReviewedCommit = latestJob.reviewedCommit;
-        latestPr.reviewedCommit = latestJob.reviewedCommit;
-        latestPr.statusBucket = latestPr.reviewerStatus === 'APPROVED' ? 'reviewed' : 'reviewed-unapproved';
-        latestPr.updatedAt = latestJob.finishedAt;
+        latestJob.reviewedCommit = latestJob.targetCommit || '';
+        if (!latestJob.targetCommit || latestPr.fromCommit === latestJob.targetCommit) {
+          latestPr.platformReviewedAt = latestJob.finishedAt;
+          latestPr.platformReviewedCommit = latestJob.reviewedCommit;
+          latestPr.reviewedCommit = latestJob.reviewedCommit;
+          latestPr.statusBucket = latestPr.reviewerStatus === 'APPROVED' ? 'reviewed' : 'reviewed-unapproved';
+          latestPr.updatedAt = latestJob.finishedAt;
+        }
       }
       if (noReviewOutput) {
         logBuffer = logText(logBuffer, 'Codex 一直在等待 stdin，未产生有效 review 输出。已按失败处理，请重新执行任务。\n');
@@ -2434,6 +3060,8 @@ function stateForClient(store, tokenMeta, storage) {
             reviewResult: latestJob.reviewResult || '',
             reviewedCommit: latestJob.reviewedCommit || '',
             targetCommit: latestJob.targetCommit || '',
+            reviewStandardSnapshot: latestJob.reviewStandardSnapshot || null,
+            reviewStandardError: latestJob.reviewStandardError || '',
             createdAt: latestJob.createdAt,
             finishedAt: latestJob.finishedAt
           }
@@ -2493,10 +3121,7 @@ function cleanLogForStorage(value) {
 }
 
 async function readJsonBody(request) {
-  const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
-  if (!chunks.length) return {};
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  return parseJsonBuffer(await readRawBody(request, 2_097_152));
 }
 
 async function sendJson(response, status, body) {
@@ -2563,8 +3188,10 @@ async function refreshScheduler() {
 }
 
 const server = createServer(async (request, response) => {
+  let requestPath = '';
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    requestPath = url.pathname;
     if (!url.pathname.startsWith('/api/')) {
       const store = await ensureStore();
       const initAssets = ['/init.html', '/init.js', '/styles.css', '/app-icon.svg'];
@@ -2582,6 +3209,247 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && url.pathname === '/api/webhooks/bitbucket') {
+      const result = await processBitbucketWebhook(request);
+      await sendJson(response, result.status, result.body);
+      if (result.runJobId) {
+        setImmediate(() => {
+          runReviewJob(result.runJobId, { system: true }).catch(async (error) => {
+            const context = {
+              startedAt: Date.now(),
+              deliveryId: result.body.deliveryId || '',
+              eventKey: '',
+              bodyBytes: 0
+            };
+            await persistWebhookLog('webhook-failed', `Webhook 评审任务启动失败：${error.message}`, context, {
+              outcome: 'failed',
+              reason: 'job-start-failed',
+              jobId: result.runJobId
+            }, 'error').catch(() => {});
+          });
+        });
+      }
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/webhooks/settings') {
+      const store = await ensureStore();
+      if (!canManagePlatform(currentUser(store))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以查看 Webhook 设置。');
+      }
+      await sendJson(response, 200, webhookSettingsPayload(store));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/webhooks/settings') {
+      const body = await readJsonBody(request);
+      const initialStore = await ensureStore();
+      if (!canManagePlatform(currentUser(initialStore))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以修改 Webhook 设置。');
+      }
+      const nextSettings = validateWebhookSettingsInput({
+        ...normalizeWebhookSettings(initialStore.settings.webhook),
+        ...body
+      });
+      const payload = await withStoreMutation((store) => {
+        store.settings.webhook = nextSettings;
+        addEvent(store, 'webhook-settings', 'Bitbucket Webhook 设置已更新', {
+          userId: currentUser(store)?.id || ''
+        });
+        return webhookSettingsPayload(store);
+      });
+      await sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/webhooks/deliveries') {
+      const store = await ensureStore();
+      if (!canManagePlatform(currentUser(store))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以查看 Webhook 投递。');
+      }
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 50)));
+      const deliveries = (store.logs || [])
+        .filter((log) => String(log.type || '').startsWith('webhook-'))
+        .slice(0, limit)
+        .map((log) => ({
+          id: log.id,
+          type: log.type,
+          level: log.level,
+          message: log.message,
+          createdAt: log.createdAt,
+          ...log.detail
+        }));
+      await sendJson(response, 200, { deliveries });
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/webhooks/test') {
+      const body = await readJsonBody(request);
+      const store = await ensureStore();
+      if (!canManagePlatform(currentUser(store))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以检测 Webhook 设置。');
+      }
+      await sendJson(response, 200, await testWebhookConfiguration(store, body));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/review-standards') {
+      const store = await ensureStore();
+      if (!canManagePlatform(currentUser(store))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以查看评审标准。');
+      }
+      await sendJson(response, 200, reviewStandardsPayload(store));
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/review-standards') {
+      const body = await readJsonBody(request);
+      const initialStore = await ensureStore();
+      if (!canManagePlatform(currentUser(initialStore))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以创建评审标准。');
+      }
+      const requestedId = String(body.id || crypto.randomUUID()).trim();
+      const payload = await withStoreMutation((store) => {
+        const config = normalizeReviewStandards(store.settings.reviewStandards);
+        if (config.standards[requestedId]) {
+          throw new WebhookHttpError(409, `评审标准 ID 已存在：${requestedId}`);
+        }
+        const standard = validateReviewStandardInput(body, { id: requestedId });
+        config.standards[standard.id] = standard;
+        store.settings.reviewStandards = normalizeReviewStandards(config);
+        addEvent(store, 'review-standard-create', `已创建评审标准：${standard.name}`, {
+          userId: currentUser(store)?.id || '',
+          reviewStandardId: standard.id,
+          reviewStandardVersion: standard.version
+        });
+        return { ...reviewStandardsPayload(store), createdStandardId: standard.id };
+      });
+      await sendJson(response, 201, payload);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/review-standards/default') {
+      const body = await readJsonBody(request);
+      const initialStore = await ensureStore();
+      if (!canManagePlatform(currentUser(initialStore))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以修改默认评审标准。');
+      }
+      const standardId = String(body.standardId || '').trim();
+      const payload = await withStoreMutation((store) => {
+        const config = normalizeReviewStandards(store.settings.reviewStandards);
+        const standard = config.standards[standardId];
+        if (!standard) throw new WebhookHttpError(404, `评审标准不存在：${standardId}`);
+        if (!standard.enabled) throw new WebhookHttpError(409, '不能将已停用的评审标准设为默认。');
+        config.defaultStandardId = standardId;
+        store.settings.reviewStandards = normalizeReviewStandards(config);
+        addEvent(store, 'review-standard-default', `默认评审标准已切换为：${standard.name}`, {
+          userId: currentUser(store)?.id || '',
+          reviewStandardId: standard.id
+        });
+        return reviewStandardsPayload(store);
+      });
+      await sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/review-standards/bindings') {
+      const body = await readJsonBody(request);
+      const initialStore = await ensureStore();
+      if (!canManagePlatform(currentUser(initialStore))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以修改仓库评审标准绑定。');
+      }
+      const payload = await withStoreMutation((store) => {
+        const config = normalizeReviewStandards(store.settings.reviewStandards);
+        config.repoBindings = validateRepoBindingsInput(body.repoBindings || {}, config);
+        store.settings.reviewStandards = normalizeReviewStandards(config);
+        addEvent(store, 'review-standard-bindings', `已更新 ${Object.keys(config.repoBindings).length} 个仓库评审标准绑定`, {
+          userId: currentUser(store)?.id || '',
+          repositoryCount: Object.keys(config.repoBindings).length
+        });
+        return reviewStandardsPayload(store);
+      });
+      await sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/review-standards/resolve') {
+      const body = await readJsonBody(request);
+      const store = await ensureStore();
+      if (!canManagePlatform(currentUser(store))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以检测评审标准。');
+      }
+      const resolution = resolveReviewStandard(store.settings.reviewStandards, body.project, body.repo);
+      await sendJson(response, 200, {
+        ...resolution,
+        snapshot: resolution.ok ? snapshotReviewStandard(resolution.standard, resolution.source) : null
+      });
+      return;
+    }
+
+    const reviewStandardMatch = url.pathname.match(/^\/api\/review-standards\/([^/]+)$/);
+    if (['PUT', 'POST'].includes(request.method) && reviewStandardMatch) {
+      const body = await readJsonBody(request);
+      const standardId = decodeURIComponent(reviewStandardMatch[1]);
+      const initialStore = await ensureStore();
+      if (!canManagePlatform(currentUser(initialStore))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以修改评审标准。');
+      }
+      const payload = await withStoreMutation((store) => {
+        const config = normalizeReviewStandards(store.settings.reviewStandards);
+        const existing = config.standards[standardId];
+        if (!existing) throw new WebhookHttpError(404, `评审标准不存在：${standardId}`);
+        if (existing.builtin) throw new WebhookHttpError(409, '内置默认标准不能修改，请复制后再编辑。');
+        const standard = validateReviewStandardInput(body, { id: standardId, existing });
+        const referenced = config.defaultStandardId === standardId || Object.values(config.repoBindings)
+          .some((binding) => binding.standardId === standardId);
+        if (!standard.enabled && referenced) {
+          throw new WebhookHttpError(409, '该标准仍是默认标准或被仓库引用，解除引用后才能停用。');
+        }
+        config.standards[standardId] = standard;
+        store.settings.reviewStandards = normalizeReviewStandards(config);
+        addEvent(store, 'review-standard-update', `已更新评审标准：${standard.name} v${standard.version}`, {
+          userId: currentUser(store)?.id || '',
+          reviewStandardId: standard.id,
+          reviewStandardVersion: standard.version
+        });
+        return reviewStandardsPayload(store);
+      });
+      await sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'DELETE' && reviewStandardMatch) {
+      const standardId = decodeURIComponent(reviewStandardMatch[1]);
+      const initialStore = await ensureStore();
+      if (!canManagePlatform(currentUser(initialStore))) {
+        throw new WebhookHttpError(403, '只有超级管理员或管理员可以删除评审标准。');
+      }
+      const payload = await withStoreMutation((store) => {
+        const config = normalizeReviewStandards(store.settings.reviewStandards);
+        const standard = config.standards[standardId];
+        if (!standard) throw new WebhookHttpError(404, `评审标准不存在：${standardId}`);
+        if (standard.builtin) throw new WebhookHttpError(409, '内置默认标准不能删除。');
+        if (config.defaultStandardId === standardId) {
+          throw new WebhookHttpError(409, '该标准当前是默认标准，请先切换默认标准。');
+        }
+        const boundRepos = Object.entries(config.repoBindings)
+          .filter(([, binding]) => binding.standardId === standardId)
+          .map(([repoKeyValue]) => repoKeyValue);
+        if (boundRepos.length) {
+          throw new WebhookHttpError(409, `该标准仍被仓库引用：${boundRepos.join(', ')}`);
+        }
+        delete config.standards[standardId];
+        store.settings.reviewStandards = normalizeReviewStandards(config);
+        addEvent(store, 'review-standard-delete', `已删除评审标准：${standard.name}`, {
+          userId: currentUser(store)?.id || '',
+          reviewStandardId: standardId
+        });
+        return reviewStandardsPayload(store);
+      });
+      await sendJson(response, 200, payload);
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/state') {
       const store = await ensureStore();
       await sendJson(response, 200, await clientState(store));
@@ -2594,7 +3462,8 @@ const server = createServer(async (request, response) => {
         throw new Error('平台已经初始化。');
       }
       await sendJson(response, 200, await checkRuntimeEnvironment(store, {
-        codexExecutablePath: url.searchParams.get('codexExecutablePath') || ''
+        codexExecutablePath: url.searchParams.get('codexExecutablePath') || '',
+        repoPathMappings: url.searchParams.get('repoPathMappings') || ''
       }));
       return;
     }
@@ -2995,6 +3864,23 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const latestStandardMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/review-with-latest-standard$/);
+    if (request.method === 'POST' && latestStandardMatch) {
+      const store = await ensureStore();
+      const previousJob = store.jobs.find((item) => item.id === latestStandardMatch[1]);
+      if (!previousJob) throw new WebhookHttpError(404, 'Review job not found.');
+      const actor = currentUser(store);
+      if (!isAdmin(actor) && previousJob.ownerUserId !== actor.id) {
+        throw new WebhookHttpError(403, '不能为其他用户的 PR 创建 review 任务。');
+      }
+      const pr = store.prs[previousJob.prKey];
+      if (!pr) throw new WebhookHttpError(404, 'PR not found for review job.');
+      const job = createReviewJob(store, pr, 'manual-latest-standard', { forceLatestStandard: true });
+      await saveStore(store);
+      await sendJson(response, 200, { job, state: await clientState(store) });
+      return;
+    }
+
     const deleteMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/);
     if (request.method === 'DELETE' && deleteMatch) {
       const { job, store } = await deleteReviewJob(deleteMatch[1]);
@@ -3011,7 +3897,11 @@ const server = createServer(async (request, response) => {
 
     await sendJson(response, 404, { error: 'Not found' });
   } catch (error) {
-    await sendJson(response, 500, { error: error.message });
+    const statusCode = Number(error.statusCode) || 500;
+    const message = requestPath === '/api/webhooks/bitbucket' && statusCode >= 500
+      ? 'Webhook 处理暂时不可用。'
+      : error.message;
+    await sendJson(response, statusCode, { error: message });
   }
 });
 
